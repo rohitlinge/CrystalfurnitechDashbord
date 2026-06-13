@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "DealerProfile": {
+      "title": "DealerProfile",
+      "description": "Store profiles of furniture dealers and admins.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "companyName": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "mobile": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "gstNumber": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "address": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending Approval", "Approved", "Rejected", "Suspended"] },
+        "registrationDate": { "type": "string", "format": "date-time" },
+        "role": { "type": "string", "enum": ["admin", "dealer"] },
+        "rejectionReason": { "type": "string" },
+        "suspensionReason": { "type": "string" }
+      },
+      "required": ["uid", "companyName", "ownerName", "mobile", "email", "gstNumber", "city", "state", "address", "status", "registrationDate", "role"]
+    },
+    "CategoryItem": {
+      "title": "CategoryItem",
+      "description": "Furniture product categories.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdDate": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "isActive", "createdDate"]
+    },
+    "ProductItem": {
+      "title": "ProductItem",
+      "description": "Exclusive modular furniture products.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "sku": { "type": "string" },
+        "price": { "type": "number" },
+        "wholesalePrice": { "type": "number" },
+        "image": { "type": "string" },
+        "images": { "type": "array" },
+        "stockStatus": { "type": "string", "enum": ["In Stock", "Low Stock", "Out of Stock"] },
+        "status": { "type": "string", "enum": ["Available", "Out Of Stock"] },
+        "description": { "type": "string" },
+        "material": { "type": "string" },
+        "color": { "type": "string" },
+        "size": { "type": "string" },
+        "dimensions": { "type": "string" },
+        "weight": { "type": "string" },
+        "minimumOrderQuantity": { "type": "number" },
+        "availableStock": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "createdDate": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "category", "sku", "price", "wholesalePrice", "image", "images", "stockStatus", "status", "description", "material", "color", "size", "dimensions", "weight", "minimumOrderQuantity", "availableStock", "isActive", "createdDate"]
+    },
+    "StockRequirement": {
+      "title": "StockRequirement",
+      "description": "Dealer stock replenishment requirements.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dealerId": { "type": "string" },
+        "dealerCompanyName": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "quantityRequested": { "type": "number" },
+        "requestedDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["Pending", "Fulfilled", "Cancelled"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "dealerId", "dealerCompanyName", "productId", "productName", "quantityRequested", "requestedDate", "status"]
+    }
+  },
+  "firestore": {
+    "dealers/{userId}": {
+      "schema": "DealerProfile",
+      "description": "User profiles of furniture dealers and system admins."
+    },
+    "categories/{categoryId}": {
+      "schema": "CategoryItem",
+      "description": "Registered furniture categories."
+    },
+    "products/{productId}": {
+      "schema": "ProductItem",
+      "description": "Company wholesale furniture product catalog."
+    },
+    "requirements/{requirementId}": {
+      "schema": "StockRequirement",
+      "description": "Dealer stock requirements submitted to corporate office."
+    }
+  }
+}

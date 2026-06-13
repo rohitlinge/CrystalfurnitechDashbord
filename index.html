@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Google AI Studio App</title>
+    <script>
+      // 1. Safe Native FormData compatibility guard
+      // This prevents 'formdata-polyfill' or other scripts from attempting to overwrite window.fetch
+      if (typeof window !== 'undefined' && typeof FormData !== 'undefined') {
+        const proto = FormData.prototype;
+        if (!proto.keys) {
+          try {
+            proto.keys = function* () {
+              const iterator = new FormData().keys();
+              for (const key of iterator) yield key;
+            };
+          } catch (e) {
+            proto.keys = function() { return []; };
+          }
+        }
+        if (!proto.values) {
+          try {
+            proto.values = function* () {
+              const iterator = new FormData().values();
+              for (const value of iterator) yield value;
+            };
+          } catch (e) {
+            proto.values = function() { return []; };
+          }
+        }
+        if (!proto.entries) {
+          try {
+            proto.entries = function* () {
+              const iterator = new FormData().entries();
+              for (const entry of iterator) yield entry;
+            };
+          } catch (e) {
+            proto.entries = function() { return []; };
+          }
+        }
+        if (!proto[Symbol.iterator]) {
+          proto[Symbol.iterator] = proto.entries;
+        }
+      }
+
+      // 2. State-of-the-art dual layer: Native fetch descriptor & globalThis/self proxies
+      (function() {
+        if (typeof window === 'undefined') return;
+
+        let overriddenFetch = window.fetch;
+
+        // Try direct re-definition of window.fetch as a getter/setter properties descriptor
+        try {
+          if ('fetch' in window) {
+            const originalFetch = window.fetch;
+            Object.defineProperty(window, 'fetch', {
+              get() {
+                return overriddenFetch || originalFetch;
+              },
+              set(val) {
+                overriddenFetch = val;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {
+          console.warn("Could not redefine native window.fetch directly, utilizing global proxies.", e);
+        }
+
+        // Set up custom Proxy layer to intercept writes through global accessors
+        try {
+          const safeProxy = new Proxy(window, {
+            get(target, prop) {
+              if (prop === 'fetch') {
+                return overriddenFetch;
+              }
+              // Prevent recursive proxy escapes while targeting proxies
+              if (prop === 'window' || prop === 'globalThis' || prop === 'self' || prop === 'global') {
+                return safeProxy;
+              }
+              const value = target[prop];
+              if (typeof value === 'function') {
+                return value.bind(target);
+              }
+              return value;
+            },
+            set(target, prop, value) {
+              if (prop === 'fetch') {
+                overriddenFetch = value;
+                return true;
+              }
+              try {
+                target[prop] = value;
+              } catch (e) {
+                console.warn("Setting property " + String(prop) + " on window failed inside sandbox:", e);
+              }
+              return true;
+            },
+            has(target, prop) {
+              return prop in target;
+            }
+          });
+
+          // Redefine standard globals to run smoothly against safeProxy
+          Object.defineProperty(window, 'globalThis', {
+            value: safeProxy,
+            writable: true,
+            configurable: true,
+            enumerable: true
+          });
+
+          Object.defineProperty(window, 'self', {
+            value: safeProxy,
+            writable: true,
+            configurable: true,
+            enumerable: true
+          });
+
+          Object.defineProperty(window, 'global', {
+            value: safeProxy,
+            writable: true,
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          console.warn("Failsafe globals proxy initialization exception:", e);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
