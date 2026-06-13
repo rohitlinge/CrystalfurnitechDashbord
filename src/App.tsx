@@ -27,8 +27,9 @@ export default function App() {
         await getDocFromServer(doc(db, 'test', 'connection'));
         console.log("Firestore connection check successful.");
       } catch (error: any) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.warn("Client connection verification offline status:", error.message);
+        const errorMsg = error?.message || '';
+        if (errorMsg.includes('the client is offline') || errorMsg.includes('unavailable')) {
+          console.warn("Client connection verification offline status:", errorMsg);
           setNetworkError("Your network appears offline. Active sync with Google Cloud is suspended.");
         }
       } finally {
@@ -74,9 +75,19 @@ export default function App() {
       
       {/* Real-time Alerts / Errors banner for connection issues if any */}
       {networkError && (
-        <div className="bg-amber-600/90 text-white text-center py-2 px-4 font-semibold text-xs flex items-center justify-center gap-2 relative z-50">
-          <Server className="w-4 h-4" />
-          <span>{networkError} - Local sandbox overrides active.</span>
+        <div className="bg-amber-600/90 text-white text-center py-2.5 px-4 font-semibold text-xs flex items-center justify-between gap-2 relative z-50 animate-fade-in">
+          <div className="flex items-center gap-2 mx-auto">
+            <Server className="w-4 h-4 text-white shrink-0 animate-pulse" />
+            <span>{networkError} - Local sandbox overrides active.</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNetworkError(null)}
+            className="p-1 px-2.5 bg-white/20 hover:bg-white/35 text-white text-[10px] uppercase font-bold rounded-md transition duration-200 cursor-pointer text-right shrink-0"
+            title="Dismiss notification"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

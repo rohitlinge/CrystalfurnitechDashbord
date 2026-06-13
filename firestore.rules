@@ -69,6 +69,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // --- Connection Verification Endpoint ---
+    match /test/{docId} {
+      allow read: if true;
+    }
+
     // --- Users / Dealers Collection ---
     match /dealers/{userId} {
       allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
