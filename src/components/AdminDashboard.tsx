@@ -24,6 +24,15 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const [uploadingBrochure, setUploadingBrochure] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Custom confirmation dialog state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    actionLabel: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+  
   // Category management modals state
   const [categoryModal, setCategoryModal] = useState<{
     isOpen: boolean;
@@ -32,6 +41,20 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     name: string;
     description: string;
     isActive: boolean;
+  } | null>(null);
+
+  // Dealer addition modal state
+  const [dealerModal, setDealerModal] = useState<{
+    isOpen: boolean;
+    companyName: string;
+    ownerName: string;
+    mobile: string;
+    email: string;
+    gstNumber: string;
+    city: string;
+    state: string;
+    address: string;
+    password: string;
   } | null>(null);
 
   // Product management modals state
@@ -119,14 +142,77 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     }
   };
 
-  const handleDeleteDealer = async (uid: string, companyName: string) => {
-    if (window.confirm(`Are you absolutely sure you want to permanently delete ${companyName}? This action is irreversible and deletes their wholesale stock requests.`)) {
-      try {
-        await DBService.deleteDealer(uid);
-        await fetchData();
-      } catch (err) {
-        console.error("Delete failed", err);
+  const handleDeleteDealer = (uid: string, companyName: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Dealer Account",
+      message: `Are you absolutely sure you want to permanently delete "${companyName}"? This action is irreversible and deletes all associated wholesale stock requests.`,
+      actionLabel: "Delete Permanent",
+      onConfirm: async () => {
+        try {
+          await DBService.deleteDealer(uid);
+          await fetchData();
+        } catch (err) {
+          console.error("Delete failed", err);
+        }
       }
+    });
+  };
+
+  const [addingDealer, setAddingDealer] = useState(false);
+  const [dealerError, setDealerError] = useState<string | null>(null);
+
+  const handleOpenAddDealer = () => {
+    setDealerError(null);
+    setDealerModal({
+      isOpen: true,
+      companyName: '',
+      ownerName: '',
+      mobile: '',
+      email: '',
+      gstNumber: '',
+      city: '',
+      state: 'Maharashtra',
+      address: '',
+      password: ''
+    });
+  };
+
+  const handleSaveDealer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dealerModal) return;
+    setDealerError(null);
+
+    if (!dealerModal.companyName || !dealerModal.ownerName || !dealerModal.email || !dealerModal.mobile || !dealerModal.password) {
+      setDealerError("Please fill in all mandatory fields (Company Name, Owner Name, Email, Mobile and Password).");
+      return;
+    }
+
+    if (dealerModal.password.length < 6) {
+      setDealerError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setAddingDealer(true);
+    try {
+      await DBService.addDealer({
+        companyName: dealerModal.companyName,
+        ownerName: dealerModal.ownerName,
+        mobile: dealerModal.mobile,
+        email: dealerModal.email,
+        gstNumber: dealerModal.gstNumber || 'N/A',
+        city: dealerModal.city || 'N/A',
+        state: dealerModal.state,
+        address: dealerModal.address || 'N/A',
+        password: dealerModal.password
+      });
+      setDealerModal(null);
+      await fetchData();
+    } catch (err: any) {
+      console.error(err);
+      setDealerError(err?.message || "Failed to add dealer account.");
+    } finally {
+      setAddingDealer(false);
     }
   };
 
@@ -159,6 +245,24 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const handleDeleteRequirement = (reqId: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Stock Indent",
+      message: "Are you sure you want to permanently delete this fulfilled or cancelled stock requirement record? This will remove it from historical listings permanently.",
+      actionLabel: "Permanently Delete",
+      onConfirm: async () => {
+        try {
+          await DBService.deleteStockRequirement(reqId);
+          await fetchData();
+        } catch (e) {
+          console.error(e);
+          alert("Failed to delete stock requirement.");
+        }
+      }
+    });
   };
 
   // --- Category Management Handlers ---
@@ -217,15 +321,21 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     }
   };
 
-  const handleDeleteCategory = async (id: string, name: string) => {
-    if (window.confirm(`Are you sure you want to delete category "${name}"? Existing products in this category will not be deleted, but they should be updated manually.`)) {
-      try {
-        await DBService.deleteCategory(id);
-        await fetchData();
-      } catch (err) {
-        console.error(err);
+  const handleDeleteCategory = (id: string, name: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Category",
+      message: `Are you sure you want to delete category "${name}"? Existing products in this category will not be deleted, but they should be updated manually.`,
+      actionLabel: "Yes, Delete Category",
+      onConfirm: async () => {
+        try {
+          await DBService.deleteCategory(id);
+          await fetchData();
+        } catch (err) {
+          console.error(err);
+        }
       }
-    }
+    });
   };
 
 
@@ -334,15 +444,21 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     }
   };
 
-  const handleDeleteProduct = async (id: string, name: string) => {
-    if (window.confirm(`Are you absolutely sure you want to permanently delete product "${name}"?`)) {
-      try {
-        await DBService.deleteProduct(id);
-        await fetchData();
-      } catch (err) {
-        console.error(err);
+  const handleDeleteProduct = (id: string, name: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Delete Furniture Product",
+      message: `Are you absolutely sure you want to permanently delete product "${name}"? This action cannot be undone and will delete it from the live B2B list.`,
+      actionLabel: "Yes, Delete Product",
+      onConfirm: async () => {
+        try {
+          await DBService.deleteProduct(id);
+          await fetchData();
+        } catch (err) {
+          console.error(err);
+        }
       }
-    }
+    });
   };
 
   const handleProductImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -598,6 +714,17 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             </div>
 
             {/* Quick Action additions CTA based on tabs */}
+            {activeTab === 'dealers' && (
+              <button
+                id="btn-add-dealer-cta"
+                type="button"
+                onClick={handleOpenAddDealer}
+                className="py-3 px-4 bg-[#fafafa] hover:bg-[#d4d4d8] text-[#09090b] font-bold text-xs rounded-lg transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer hover:shadow-md"
+              >
+                <Plus className="w-4 h-4" /> Add Dealer
+              </button>
+            )}
+
             {activeTab === 'categories' && (
               <button
                 id="btn-add-category-cta"
@@ -906,7 +1033,19 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-[10px] text-zinc-500 font-medium">No actions pending</span>
+                              <div className="flex justify-end items-center gap-2">
+                                <span className="text-[10px] text-zinc-500 font-medium">Completed</span>
+                                <button
+                                  id={`btn-delete-req-${rq.id}`}
+                                  type="button"
+                                  onClick={() => handleDeleteRequirement(rq.id)}
+                                  className="p-1 px-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 border border-[#27272a] hover:border-red-500/20 rounded-lg transition flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                                  title="Delete Requirement Record"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                  Delete
+                                </button>
+                              </div>
                             )}
                           </td>
 
@@ -1323,6 +1462,178 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
         </div>
       )}
 
+      {/* Dealer Addition Modal */}
+      {dealerModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-[#18181b] rounded-xl border border-[#27272a] max-w-xl w-full p-6 space-y-4 shadow-2xl my-auto animate-fade-in max-h-[90vh] overflow-y-auto">
+            
+            <div className="flex items-center justify-between border-b border-[#27272a] pb-3">
+              <h4 className="text-sm font-bold text-[#fafafa] flex items-center gap-1.5 uppercase tracking-wider">
+                <Users className="w-5 h-5 text-zinc-400" />
+                Add New Dealer Partner
+              </h4>
+              <button 
+                type="button"
+                onClick={() => setDealerModal(null)}
+                className="text-[#a1a1aa] hover:text-[#fafafa] transition cursor-pointer"
+              >
+                <X className="w-4 h-4 animate-duration-150" />
+              </button>
+            </div>
+
+            {dealerError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                {dealerError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveDealer} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* Company Name */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">Company Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={dealerModal.companyName}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, companyName: e.target.value } : null)}
+                    placeholder="e.g. Furnitech Enterprises"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* Owner Name */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">Owner Name *</label>
+                  <input
+                    required
+                    type="text"
+                    value={dealerModal.ownerName}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, ownerName: e.target.value } : null)}
+                    placeholder="e.g. Rajesh Kumar"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* Email Address */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">Email Address *</label>
+                  <input
+                    required
+                    type="email"
+                    value={dealerModal.email}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, email: e.target.value } : null)}
+                    placeholder="rajesh@furnitech.com"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* Mobile Number */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">Mobile Number (+91) *</label>
+                  <input
+                    required
+                    type="tel"
+                    pattern="[0-9]{10}"
+                    value={dealerModal.mobile}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, mobile: e.target.value.replace(/\D/g, '').substring(0, 10) } : null)}
+                    placeholder="10-digit mobile number"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* GST Number */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">GST Number (Optional)</label>
+                  <input
+                    type="text"
+                    maxLength={15}
+                    value={dealerModal.gstNumber}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, gstNumber: e.target.value.toUpperCase() } : null)}
+                    placeholder="e.g. 27AAAAA1111A1Z1"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* City */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">City</label>
+                  <input
+                    type="text"
+                    value={dealerModal.city}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, city: e.target.value } : null)}
+                    placeholder="e.g. Mumbai"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* State */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">State</label>
+                  <input
+                    type="text"
+                    value={dealerModal.state}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, state: e.target.value } : null)}
+                    placeholder="e.g. Maharashtra"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* Password */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">Log-in Password *</label>
+                  <input
+                    required
+                    type="password"
+                    minLength={6}
+                    value={dealerModal.password}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, password: e.target.value } : null)}
+                    placeholder="Minimum 6 characters"
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] rounded-lg focus:border-[#fafafa] outline-none transition"
+                  />
+                </div>
+
+                {/* Complete Address */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-[10px] font-bold text-[#a1a1aa] uppercase tracking-wider">Registered Address</label>
+                  <textarea
+                    value={dealerModal.address}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, address: e.target.value } : null)}
+                    placeholder="Detailed warehouse or office coordinates..."
+                    rows={2}
+                    className="w-full text-xs p-3 bg-[#09090b] border border-[#27272a] text-[#fafafa] placeholder-zinc-500 rounded-lg focus:border-[#fafafa] outline-none resize-none transition"
+                  />
+                </div>
+
+              </div>
+
+              <div className="flex gap-2.5 pt-3 border-t border-[#27272a]">
+                <button
+                  type="button"
+                  onClick={() => setDealerModal(null)}
+                  className="flex-1 py-3 bg-transparent hover:bg-[#27272a] text-xs text-[#fafafa] rounded-lg border border-[#27272a] font-bold transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="btn-save-new-dealer"
+                  type="submit"
+                  disabled={addingDealer}
+                  className="flex-1 py-3 bg-[#fafafa] hover:bg-[#d4d4d8] disabled:bg-[#27272a] disabled:text-[#a1a1aa] text-[#09090b] rounded-lg text-xs font-bold transition shadow-md flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  {addingDealer && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  {addingDealer ? 'Creating Account...' : 'Register Dealer'}
+                </button>
+              </div>
+
+            </form>
+
+          </div>
+        </div>
+      )}
+
       {/* Product Add/Edit Modal (Step 4) */}
       {productModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -1686,7 +1997,52 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
 
+      {confirmModal?.isOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in animate-duration-150">
+          <div className="bg-[#18181b] rounded-2xl border border-red-500/20 max-w-sm w-full p-6 space-y-4 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-amber-500" />
+            
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-500/10 rounded-lg text-red-500 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-[#fafafa] leading-none">
+                  {confirmModal.title}
+                </h4>
+                <p className="text-[11px] text-[#a1a1aa] leading-relaxed pt-1">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 py-2.5 bg-transparent hover:bg-[#27272a] text-xs text-[#fafafa] border border-[#27272a] rounded-xl font-bold transition duration-200 cursor-pointer"
+              >
+                No, Keep
+              </button>
+              <button
+                id="btn-confirm-delete"
+                type="button"
+                onClick={async () => {
+                  try {
+                    await confirmModal.onConfirm();
+                  } finally {
+                    setConfirmModal(null);
+                  }
+                }}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white text-xs rounded-xl font-bold transition duration-200 shadow-lg shadow-red-900/20 cursor-pointer"
+              >
+                {confirmModal.actionLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -899,6 +899,94 @@ export class DBService {
     }
   }
 
+  // --- Create/Add Dealer (Admin Action) ---
+  static async addDealer(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
+    const isMock = this.isMockMode();
+    const mockUid = 'dealer-' + Math.random().toString(36).substring(2, 11);
+    const newProfile: DealerProfile = {
+      uid: mockUid,
+      companyName: fields.companyName,
+      ownerName: fields.ownerName,
+      mobile: fields.mobile,
+      email: fields.email,
+      gstNumber: fields.gstNumber,
+      city: fields.city,
+      state: fields.state,
+      address: fields.address,
+      status: 'Approved',
+      registrationDate: new Date().toISOString(),
+      role: 'dealer'
+    };
+
+    if (!isMock) {
+      try {
+        let fbUid = '';
+        try {
+          // Attempt to register the user under Auth
+          const authResult = await createUserWithEmailAndPassword(auth, fields.email, fields.password);
+          fbUid = authResult.user.uid;
+        } catch (authError: any) {
+          // Handle existing account case gracefully
+          if (
+            authError?.code === 'auth/email-already-in-use' ||
+            authError?.message?.includes('email-already-in-use')
+          ) {
+            console.log("Dealer auth account already exists. Attempting to authenticate directly as the dealer to update/heal state...");
+            try {
+              const authResult = await signInWithEmailAndPassword(auth, fields.email, fields.password);
+              fbUid = authResult.user.uid;
+            } catch (signInErr: any) {
+              console.error("Sign in failed for existing dealer auth account:", signInErr);
+              throw new Error("A dealer with this email is already registered, and the login password provided did not match their credentials. Please use a different email or specify their correct password to complete creation.");
+            }
+          } else {
+            throw authError;
+          }
+        }
+
+        newProfile.uid = fbUid;
+
+        // Step 1: Write initial profile to Firestore with 'Pending Approval' status.
+        // This is necessary because we are temporarily signed in as the dealer, and the rules only allow
+        // self-creation with 'Pending Approval' status.
+        const initialDoc = {
+          ...newProfile,
+          status: 'Pending Approval' as const
+        };
+        await setDoc(doc(db, 'dealers', fbUid), initialDoc);
+
+        // Step 2: Instantly sign back in as the main Admin
+        await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+
+        // Step 3: Now authenticated as the Admin, promote their status to 'Approved'
+        await updateDoc(doc(db, 'dealers', fbUid), { status: 'Approved' });
+        console.log("Dealer account added and promoted to Approved successfully, Admin session restored.");
+      } catch (error: any) {
+        console.error("Firebase Live Add Dealer operation failed:", error);
+        // Make sure we try to restore the admin session if any step failed while we were authenticated as the dealer
+        try {
+          await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+        } catch (restoreErr) {
+          console.error("Critical: Failed to restore Admin session during error handling:", restoreErr);
+        }
+        throw new Error(error?.message || "Failed to add dealer in live mode. Please verify Firestore rules.");
+      }
+    }
+
+    // Update local storage representation
+    const dealers = getStorageItem<DealerProfile[]>('dealers', []);
+    const filtered = dealers.filter(d => d.email.toLowerCase() !== fields.email.toLowerCase());
+    filtered.unshift(newProfile);
+    setStorageItem('dealers', filtered);
+
+    // Save passwords locally for fallback validations
+    const passwords = getStorageItem<Record<string, string>>('credentials', {});
+    passwords[fields.email.toLowerCase()] = fields.password;
+    setStorageItem('credentials', passwords);
+
+    return newProfile;
+  }
+
   // --- Submit Stock Requirement (Dealer Action) ---
   static async submitStockRequirement(reqData: Omit<StockRequirement, 'id' | 'requestedDate' | 'status'>): Promise<StockRequirement> {
     const isMock = this.isMockMode();
@@ -1077,6 +1165,25 @@ export class DBService {
         });
       } catch (error) {
         console.error("Failed updating Firestore requirement status with transaction:", error);
+        throw error;
+      }
+    }
+  }
+
+  // --- Delete Stock Requirement (Admin Action) ---
+  static async deleteStockRequirement(id: string): Promise<void> {
+    const isMock = this.isMockMode();
+    
+    // Delete local
+    const reqs = getStorageItem<StockRequirement[]>('requirements', []);
+    const filtered = reqs.filter(r => r.id !== id);
+    setStorageItem('requirements', filtered);
+
+    if (!isMock) {
+      try {
+        await deleteDoc(doc(db, 'requirements', id));
+      } catch (error) {
+        console.error("Failed to delete stock requirement from Live Firestore:", error);
         throw error;
       }
     }

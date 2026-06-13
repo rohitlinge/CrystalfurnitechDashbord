@@ -4,7 +4,7 @@ import { DealerProfile, ProductItem, StockRequirement } from '../types';
 import { 
   Building, MapPin, Truck, RefreshCw, Send, ClipboardCheck, LayoutGrid, Search, 
   Info, LogOut, Package2, ShieldCheck, ShoppingCart, Calendar, CheckCircle, Clock, X, SlidersHorizontal,
-  FileText, Download
+  FileText, Download, AlertTriangle
 } from 'lucide-react';
 
 interface DealerDashboardProps {
@@ -25,6 +25,15 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
   const [requestNotes, setRequestNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  
+  // Custom confirmation dialog state
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    actionLabel: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -88,15 +97,21 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
     }
   };
 
-  const handleCancelRequirement = async (reqId: string) => {
-    if (window.confirm("Are you sure you want to cancel this pending stock request?")) {
-      try {
-        await DBService.updateStockRequirementStatus(reqId, 'Cancelled');
-        await fetchData();
-      } catch (err) {
-        console.error(err);
+  const handleCancelRequirement = (reqId: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: "Cancel Stock Request",
+      message: "Are you sure you want to cancel this pending stock request? Releasing this request will instantly refund the reserved stock back to the active catalog.",
+      actionLabel: "Yes, Cancel Request",
+      onConfirm: async () => {
+        try {
+          await DBService.updateStockRequirementStatus(reqId, 'Cancelled');
+          await fetchData();
+        } catch (err) {
+          console.error(err);
+        }
       }
-    }
+    });
   };
 
   // Get distinct categories (only from active products)
@@ -588,6 +603,52 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
               </form>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {confirmModal?.isOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in animate-duration-150">
+          <div className="bg-[#18181b] rounded-2xl border border-red-500/20 max-w-sm w-full p-6 space-y-4 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-amber-500" />
+            
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-red-500/10 rounded-lg text-red-500 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-[#fafafa] leading-none">
+                  {confirmModal.title}
+                </h4>
+                <p className="text-[11px] text-[#a1a1aa] leading-relaxed pt-1">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 py-2.5 bg-transparent hover:bg-[#27272a] text-xs text-[#fafafa] border border-[#27272a] rounded-xl font-bold transition duration-200 cursor-pointer"
+              >
+                No, Keep
+              </button>
+              <button
+                id="btn-confirm-dealer-action"
+                type="button"
+                onClick={async () => {
+                  try {
+                    await confirmModal.onConfirm();
+                  } finally {
+                    setConfirmModal(null);
+                  }
+                }}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white text-xs rounded-xl font-bold transition duration-200 shadow-lg shadow-red-900/20 cursor-pointer"
+              >
+                {confirmModal.actionLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}
