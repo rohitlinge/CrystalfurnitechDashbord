@@ -24,21 +24,12 @@ import {
 import { getStorage, ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem } from './types';
 
-// The user-provided Firebase Web App configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyB9d3SLvVuZpHKld9HshN-9oRZpkz0RrBc",
-  authDomain: "crystalfurnitech-4a073.firebaseapp.com",
-  projectId: "crystalfurnitech-4a073",
-  storageBucket: "crystalfurnitech-4a073.firebasestorage.app",
-  messagingSenderId: "279603293712",
-  appId: "1:279603293712:web:4dd51ca669232c951f2495",
-  measurementId: "G-60W3CRNJS2"
-};
+import firebaseAppletConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const app = getApps().length === 0 ? initializeApp(firebaseAppletConfig) : getApp();
 export const auth = getAuth(app);
-export const db = getFirestore(app, "ai-studio-82bd942c-4b18-41cb-a0b6-56c1589d6428");
+export const db = getFirestore(app, firebaseAppletConfig.firestoreDatabaseId);
 
 // Initial Categories specification
 export const INITIAL_CATEGORIES: CategoryItem[] = [
@@ -206,6 +197,14 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     createdDate: new Date('2026-06-07T10:00:00Z').toISOString()
   }
 ];
+
+// Helper to protect database operations from hanging indefinitely due to network/configuration issues
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 7000, errorMsg: string = "Firebase database request timed out. Please check your internet connection or verify your database setup."): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs))
+  ]);
+}
 
 // Helper to determine if we are using Local Storage engine (e.g. if offline, rules fail, or for easy playgrounding)
 const STORAGE_KEY_PREFIX = 'crystalfurnitech_';
@@ -648,13 +647,21 @@ export class DBService {
 
     if (!isMock) {
       try {
-        // Attempt authenticating with real firebase
-        const authResult = await createUserWithEmailAndPassword(auth, fields.email, fields.password);
+        // Attempt authenticating with real firebase with timeout limits
+        const authResult = await withTimeout(
+          createUserWithEmailAndPassword(auth, fields.email, fields.password),
+          6000,
+          "Authentication registration timed out. Please check your network connection and verify if the Firebase Auth service is responsive."
+        );
         const fbUid = authResult.user.uid;
         newProfile.uid = fbUid;
         
-        // Write info to Firestore
-        await setDoc(doc(db, 'dealers', fbUid), newProfile);
+        // Write info to Firestore with timeout limit
+        await withTimeout(
+          setDoc(doc(db, 'dealers', fbUid), newProfile),
+          6000,
+          "Database registration write timed out. This usually happens if the live Firestore connection is blocked, or the Security Rules are rejecting the write."
+        );
       } catch (error: any) {
         console.error("Firebase Live Sign Up failed:", error);
         
@@ -666,13 +673,21 @@ export class DBService {
         ) {
           try {
             console.log("Email already in use. Checking if credentials are valid to restore/heal dealer document in Firestore...");
-            // Attempt to sign in to verify they own this email/password combination
-            const authResult = await signInWithEmailAndPassword(auth, fields.email, fields.password);
+            // Attempt to sign in with timeout limits
+            const authResult = await withTimeout(
+              signInWithEmailAndPassword(auth, fields.email, fields.password),
+              6000,
+              "Authentication sign-in timed out during self-healing check."
+            );
             const fbUid = authResult.user.uid;
             newProfile.uid = fbUid;
             
-            // Re-write or self-correct registration info to Firestore to heal any broken signup states
-            await setDoc(doc(db, 'dealers', fbUid), newProfile);
+            // Re-write or self-correct registration info to Firestore with timeout limits
+            await withTimeout(
+              setDoc(doc(db, 'dealers', fbUid), newProfile),
+              6000,
+              "Database self-healing update timed out. Please check your database rules."
+            );
             console.log("Dealer document restored/updated successfully for user:", fields.email);
           } catch (signInErr: any) {
             console.error("Failed to recover existing auth user via sign in:", signInErr);
@@ -953,13 +968,25 @@ export class DBService {
           ...newProfile,
           status: 'Pending Approval' as const
         };
-        await setDoc(doc(db, 'dealers', fbUid), initialDoc);
+        await withTimeout(
+          setDoc(doc(db, 'dealers', fbUid), initialDoc),
+          6000,
+          "Database write timed out while adding initial dealer profile."
+        );
 
         // Step 2: Instantly sign back in as the main Admin
-        await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+        await withTimeout(
+          signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+          6000,
+          "Failed to restore Admin session: sign-in timed out."
+        );
 
         // Step 3: Now authenticated as the Admin, promote their status to 'Approved'
-        await updateDoc(doc(db, 'dealers', fbUid), { status: 'Approved' });
+        await withTimeout(
+          updateDoc(doc(db, 'dealers', fbUid), { status: 'Approved' }),
+          6000,
+          "Database status update timed out while promoting dealer status."
+        );
         console.log("Dealer account added and promoted to Approved successfully, Admin session restored.");
       } catch (error: any) {
         console.error("Firebase Live Add Dealer operation failed:", error);

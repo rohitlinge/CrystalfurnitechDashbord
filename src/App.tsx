@@ -28,7 +28,8 @@ export default function App() {
         console.log("Firestore connection check successful.");
       } catch (error: any) {
         const errorMsg = error?.message || '';
-        if (errorMsg.includes('the client is offline') || errorMsg.includes('unavailable')) {
+        console.error("Firestore connection health check result:", error);
+        if (errorMsg.includes('the client is offline')) {
           console.warn("Client connection verification offline status:", errorMsg);
           setNetworkError("Your network appears offline. Active sync with Google Cloud is suspended.");
         }
