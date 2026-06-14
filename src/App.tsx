@@ -23,15 +23,18 @@ export default function App() {
           setNetworkChecked(true);
           return;
         }
-        // Test connection
-        await getDocFromServer(doc(db, 'test', 'connection'));
+        // Test connection with a safe fast-timeout race
+        await Promise.race([
+          getDocFromServer(doc(db, 'test', 'connection')),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
+        ]);
         console.log("Firestore connection check successful.");
       } catch (error: any) {
         const errorMsg = error?.message || '';
         console.error("Firestore connection health check result:", error);
-        if (errorMsg.includes('the client is offline')) {
+        if (errorMsg.includes('the client is offline') || errorMsg === 'timeout' || errorMsg.includes('failed-precondition') || errorMsg.includes('unavailable')) {
           console.warn("Client connection verification offline status:", errorMsg);
-          setNetworkError("Your network appears offline. Active sync with Google Cloud is suspended.");
+          setNetworkError("Live sync with Google Cloud is pending. Please verify your connection.");
         }
       } finally {
         setNetworkChecked(true);

@@ -308,20 +308,36 @@ export class DBService {
 
     try {
       console.log("Checking if categories need seeding in live Firestore...");
-      const catsSnapshot = await getDocs(collection(db, 'categories'));
+      const catsSnapshot = await withTimeout(
+        getDocs(collection(db, 'categories')),
+        5000,
+        "Categories query timed out during seeding."
+      );
       if (catsSnapshot.empty) {
         console.log("Seeding initial categories into live Firestore...");
         for (const cat of INITIAL_CATEGORIES) {
-          await setDoc(doc(db, 'categories', cat.id), cat);
+          await withTimeout(
+            setDoc(doc(db, 'categories', cat.id), cat),
+            4000,
+            `Seeding category ${cat.name} timed out.`
+          );
         }
       }
 
       console.log("Checking if products need seeding in live Firestore...");
-      const prodsSnapshot = await getDocs(collection(db, 'products'));
+      const prodsSnapshot = await withTimeout(
+        getDocs(collection(db, 'products')),
+        5000,
+        "Products query timed out during seeding."
+      );
       if (prodsSnapshot.empty) {
         console.log("Seeding initial products into live Firestore...");
         for (const prod of INITIAL_PRODUCTS) {
-          await setDoc(doc(db, 'products', prod.id), prod);
+          await withTimeout(
+            setDoc(doc(db, 'products', prod.id), prod),
+            4000,
+            `Seeding product ${prod.name} timed out.`
+          );
         }
       }
     } catch (e) {
@@ -347,12 +363,20 @@ export class DBService {
       // Step 1: Create or Sign In as Admin
       let fbUid = '';
       try {
-        const authResult = await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+        const authResult = await withTimeout(
+          signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+          6000,
+          "Admin sign-in operation timed out."
+        );
         fbUid = authResult.user.uid;
       } catch (signInErr: any) {
         console.log("Sign-in failed/user not found, attempting to register 'admin@crystalfurnitech.com'...", signInErr.message);
         try {
-          const authResult = await createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+          const authResult = await withTimeout(
+            createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+            6000,
+            "Admin registration operation timed out."
+          );
           fbUid = authResult.user.uid;
         } catch (createErr: any) {
           if (auth.currentUser) {
@@ -381,7 +405,11 @@ export class DBService {
         };
 
         // Ensure the dealers profile exists and is writeable
-        await setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true });
+        await withTimeout(
+          setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true }),
+          6000,
+          "Writing Admin profile to Firestore timed out."
+        );
         
         // Step 3: Run the Firestore collection seed to populate Categories and Products
         await this.seedFirestore();
@@ -414,7 +442,11 @@ export class DBService {
     if (!isMock) {
       try {
         const q = query(collection(db, 'categories'), orderBy('name', 'asc'));
-        const querySnapshot = await getDocs(q);
+        const querySnapshot = await withTimeout(
+          getDocs(q),
+          5000,
+          "Categories request timed out."
+        );
         const fetchedCats: CategoryItem[] = [];
         querySnapshot.forEach((doc) => {
           fetchedCats.push(doc.data() as CategoryItem);
@@ -488,7 +520,11 @@ export class DBService {
     if (!isMock) {
       try {
         const q = query(collection(db, 'products'), orderBy('createdDate', 'desc'));
-        const querySnapshot = await getDocs(q);
+        const querySnapshot = await withTimeout(
+          getDocs(q),
+          5000,
+          "Products request timed out."
+        );
         const fetchedProds: ProductItem[] = [];
         querySnapshot.forEach((doc) => {
           fetchedProds.push(doc.data() as ProductItem);
@@ -630,12 +666,13 @@ export class DBService {
   static async register(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
     const isMock = this.isMockMode();
     const mockUid = 'dealer-' + Math.random().toString(36).substring(2, 11);
+    const cleanEmail = fields.email.toLowerCase().trim();
     const newProfile: DealerProfile = {
       uid: mockUid,
       companyName: fields.companyName,
       ownerName: fields.ownerName,
       mobile: fields.mobile,
-      email: fields.email,
+      email: cleanEmail,
       gstNumber: fields.gstNumber,
       city: fields.city,
       state: fields.state,
@@ -649,7 +686,7 @@ export class DBService {
       try {
         // Attempt authenticating with real firebase with timeout limits
         const authResult = await withTimeout(
-          createUserWithEmailAndPassword(auth, fields.email, fields.password),
+          createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
           6000,
           "Authentication registration timed out. Please check your network connection and verify if the Firebase Auth service is responsive."
         );
@@ -675,7 +712,7 @@ export class DBService {
             console.log("Email already in use. Checking if credentials are valid to restore/heal dealer document in Firestore...");
             // Attempt to sign in with timeout limits
             const authResult = await withTimeout(
-              signInWithEmailAndPassword(auth, fields.email, fields.password),
+              signInWithEmailAndPassword(auth, cleanEmail, fields.password),
               6000,
               "Authentication sign-in timed out during self-healing check."
             );
@@ -688,7 +725,7 @@ export class DBService {
               6000,
               "Database self-healing update timed out. Please check your database rules."
             );
-            console.log("Dealer document restored/updated successfully for user:", fields.email);
+            console.log("Dealer document restored/updated successfully for user:", cleanEmail);
           } catch (signInErr: any) {
             console.error("Failed to recover existing auth user via sign in:", signInErr);
             throw new Error("This email is already registered with a different password. Please check your credentials or complete registration with the correct password.");
@@ -702,13 +739,13 @@ export class DBService {
     // Save mock record in all cases to guarantee local robustness
     const dealers = getStorageItem<DealerProfile[]>('dealers', []);
     // Prevent duplicates
-    const filtered = dealers.filter(d => d.email.toLowerCase() !== fields.email.toLowerCase());
+    const filtered = dealers.filter(d => d.email.toLowerCase() !== cleanEmail);
     filtered.push(newProfile);
     setStorageItem('dealers', filtered);
 
     // Save passwords locally in mock database for demo login purposes
     const passwords = getStorageItem<Record<string, string>>('credentials', {});
-    passwords[fields.email.toLowerCase()] = fields.password;
+    passwords[cleanEmail] = fields.password;
     setStorageItem('credentials', passwords);
 
     return newProfile;
@@ -781,18 +818,26 @@ export class DBService {
     const isMock = this.isMockMode();
     if (!isMock) {
       try {
-        const authResult = await signInWithEmailAndPassword(auth, email, password);
+        const authResult = await withTimeout(
+          signInWithEmailAndPassword(auth, cleanEmail, password),
+          6000,
+          "Login request timed out. Please check your network connection."
+        );
         const fbUid = authResult.user.uid;
         
         // Fetch profile
-        const docSnap = await getDoc(doc(db, 'dealers', fbUid));
+        const docSnap = await withTimeout(
+          getDoc(doc(db, 'dealers', fbUid)),
+          5000,
+          "Retrieving dealer profile timed out."
+        );
         if (docSnap.exists()) {
           const profile = docSnap.data() as DealerProfile;
           this.setActiveUser(profile);
           return profile;
         }
       } catch (error) {
-        console.error("Firebase Login failed, authenticating mock dealer:", error);
+        console.error("Firebase Login failed, authenticating mock dealer/fallback check:", error);
       }
     }
 
@@ -829,7 +874,11 @@ export class DBService {
     if (!isMock) {
       try {
         const q = query(collection(db, 'dealers'), orderBy('registrationDate', 'desc'));
-        const querySnapshot = await getDocs(q);
+        const querySnapshot = await withTimeout(
+          getDocs(q),
+          5000,
+          "Dealers request timed out."
+        );
         const fetchedDealers: DealerProfile[] = [];
         querySnapshot.forEach((doc) => {
           fetchedDealers.push(doc.data() as DealerProfile);
@@ -1096,7 +1145,11 @@ export class DBService {
         if (dealerId) {
           q = query(colRef, where('dealerId', '==', dealerId));
         }
-        const querySnap = await getDocs(q);
+        const querySnap = await withTimeout(
+          getDocs(q),
+          5000,
+          "Stock requirements request timed out."
+        );
         const fetchedReqs: StockRequirement[] = [];
         querySnap.forEach(d => {
           fetchedReqs.push(d.data() as StockRequirement);
