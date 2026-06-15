@@ -62,6 +62,9 @@ function debugLog(location: string, message: string, data: Record<string, unknow
     const w = window as Window & { __CF_DEBUG__?: typeof payload[] };
     w.__CF_DEBUG__ = w.__CF_DEBUG__ || [];
     w.__CF_DEBUG__.push(payload);
+    try {
+      sessionStorage.setItem('cf_debug_a1718d', JSON.stringify(w.__CF_DEBUG__.slice(-50)));
+    } catch { /* quota */ }
   }
 }
 
@@ -84,15 +87,18 @@ debugLog('firebase.ts:init', 'Firebase config loaded', {
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-// Force long polling — reliable on networks that block WebSockets (do not combine with autoDetect)
+// Auto-detect long polling on restrictive networks — avoid forceLongPolling (causes SDK assertion crashes)
 export const db = initializeFirestore(
   app,
-  { experimentalForceLongPolling: true },
+  { experimentalAutoDetectLongPolling: true },
   databaseId
 );
 
-/** Wake Firestore network layer and wait until Auth token is ready for writes. */
-async function prepareFirestoreWrite(): Promise<void> {
+// Defer network wake — avoid racing with connection check (prevents SDK INTERNAL ASSERTION errors)
+let networkPrepared = false;
+async function prepareFirestoreWriteOnce(): Promise<void> {
+  if (networkPrepared) return;
+  networkPrepared = true;
   await enableNetwork(db);
   if (!auth.currentUser) {
     await new Promise<void>((resolve) => {
@@ -108,8 +114,10 @@ async function prepareFirestoreWrite(): Promise<void> {
   }
 }
 
-// Keep Firestore online from app start
-prepareFirestoreWrite().catch(() => {});
+/** Wake Firestore network layer and wait until Auth token is ready for writes. */
+async function prepareFirestoreWrite(): Promise<void> {
+  await prepareFirestoreWriteOnce();
+}
 
 /** Wait until Firebase Auth has resolved the initial persisted session. */
 function waitForAuthReady(): Promise<void> {
@@ -470,34 +478,7 @@ export function getFirebaseSetupHint(): string {
   return `Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains. Also add https://${host}/* to Google Cloud → API key → HTTP referrers.`;
 }
 
-/** SDK connectivity check — no API key in URL (works when HTTP referrers block REST ping). */
-async function checkFirestoreViaSdk(timeoutMs: number): Promise<boolean> {
-  try {
-    await enableNetwork(db);
-    await Promise.race([
-      getDoc(doc(db, 'test', 'connection')),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('SDK connection timed out')), timeoutMs)
-      ),
-    ]);
-    // #region agent log
-    debugLog('firebase.ts:checkFirestoreViaSdk', 'SDK ping ok', {
-      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-    }, 'D');
-    // #endregion
-    return true;
-  } catch (err) {
-    // #region agent log
-    debugLog('firebase.ts:checkFirestoreViaSdk', 'SDK ping failed', {
-      error: err instanceof Error ? err.message : String(err),
-      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-    }, 'E');
-    // #endregion
-    return false;
-  }
-}
-
-/** Ping Firestore REST API — reliable in browsers (avoids SDK offline false-negatives). */
+/** Ping Firestore REST API — used for localhost connectivity verification only. */
 async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -533,43 +514,44 @@ async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
 
 /** Ensure Firestore network is enabled and verify cloud connectivity. */
 export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promise<boolean> {
-  // SDK first — no API key in URL (works on Vercel when HTTP referrers block REST ping)
-  if (await checkFirestoreViaSdk(Math.min(timeoutMs, 15000))) {
-    // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via SDK', { hostname: window.location.hostname }, 'D');
-    // #endregion
-    return true;
-  }
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
 
-  // REST ping fallback — works on localhost; may fail on Vercel if API key referrers exclude domain
-  if (await checkFirestoreViaRest(Math.min(timeoutMs, 12000))) {
-    try {
-      await enableNetwork(db);
-    } catch {
-      /* network may already be enabled */
-    }
-    // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via REST', { hostname: window.location.hostname }, 'D');
-    // #endregion
-    return true;
-  }
-
-  // Last resort: enable network layer and allow login to surface real auth errors
   try {
-    await enableNetwork(db);
+    await prepareFirestoreWriteOnce();
+  } catch (err) {
     // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'Checks failed, network enabled anyway', {
-      hostname: window.location.hostname,
-      setupHint: getFirebaseSetupHint(),
+    debugLog('firebase.ts:ensureFirebaseConnection', 'enableNetwork failed', {
+      error: err instanceof Error ? err.message : String(err),
+      hostname,
     }, 'E');
     // #endregion
-    return typeof window !== 'undefined' && window.location.hostname !== 'localhost';
-  } catch {
-    // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'All connection checks failed', { hostname: window.location.hostname }, 'E');
-    // #endregion
-    return false;
   }
+
+  // Local dev: verify with REST ping (SDK getDoc races cause INTERNAL ASSERTION crashes)
+  if (isLocal && (await checkFirestoreViaRest(Math.min(timeoutMs, 12000)))) {
+    // #region agent log
+    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via REST', { hostname }, 'D');
+    // #endregion
+    return true;
+  }
+
+  // Deployed (Vercel): REST ping uses API key in URL — often blocked by HTTP referrer rules.
+  // Network is enabled; login will surface auth/domain errors if Firebase Console is not configured.
+  if (!isLocal) {
+    // #region agent log
+    debugLog('firebase.ts:ensureFirebaseConnection', 'Deployed host — network ready', {
+      hostname,
+      setupHint: getFirebaseSetupHint(),
+    }, 'C');
+    // #endregion
+    return true;
+  }
+
+  // #region agent log
+  debugLog('firebase.ts:ensureFirebaseConnection', 'Local REST check failed', { hostname }, 'E');
+  // #endregion
+  return false;
 }
 
 function formatFirebaseError(error: unknown, fallback: string): string {
