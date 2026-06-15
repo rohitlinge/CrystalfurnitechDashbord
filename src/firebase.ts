@@ -52,6 +52,35 @@ const firebaseConfig = {
 
 const databaseId = readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID') || firebaseAppletConfig.firestoreDatabaseId;
 
+/** Debug instrumentation — session a1718d */
+function debugLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string) {
+  const payload = { sessionId: 'a1718d', location, message, data, hypothesisId, timestamp: Date.now(), runId: 'pre-fix' };
+  // #region agent log
+  fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a1718d' }, body: JSON.stringify(payload) }).catch(() => {});
+  // #endregion
+  if (typeof window !== 'undefined') {
+    const w = window as Window & { __CF_DEBUG__?: typeof payload[] };
+    w.__CF_DEBUG__ = w.__CF_DEBUG__ || [];
+    w.__CF_DEBUG__.push(payload);
+  }
+}
+
+// #region agent log
+debugLog('firebase.ts:init', 'Firebase config loaded', {
+  hostname: typeof window !== 'undefined' ? window.location.hostname : 'ssr',
+  origin: typeof window !== 'undefined' ? window.location.origin : '',
+  projectId: firebaseConfig.projectId,
+  authDomain: firebaseConfig.authDomain,
+  databaseId,
+  configSource: {
+    apiKeyFromEnv: !!readEnv('VITE_FIREBASE_API_KEY'),
+    projectFromEnv: !!readEnv('VITE_FIREBASE_PROJECT_ID'),
+    dbFromEnv: !!readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID'),
+  },
+  apiKeyPrefix: firebaseConfig.apiKey?.slice(0, 8),
+}, 'A');
+// #endregion
+
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
@@ -443,8 +472,24 @@ async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
       `/databases/${encodeURIComponent(databaseId)}/documents/test/connection` +
       `?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
     const res = await fetch(url, { signal: controller.signal });
-    return res.ok || res.status === 404 || res.status === 403;
-  } catch {
+    const ok = res.ok || res.status === 404 || res.status === 403;
+    // #region agent log
+    debugLog('firebase.ts:checkFirestoreViaRest', 'REST ping result', {
+      status: res.status,
+      ok,
+      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+      projectId: firebaseConfig.projectId,
+      databaseId,
+    }, ok ? 'D' : 'C');
+    // #endregion
+    return ok;
+  } catch (err) {
+    // #region agent log
+    debugLog('firebase.ts:checkFirestoreViaRest', 'REST ping failed', {
+      error: err instanceof Error ? err.message : String(err),
+      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+    }, 'C');
+    // #endregion
     return false;
   } finally {
     clearTimeout(timer);
@@ -460,6 +505,9 @@ export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promi
     } catch {
       /* network may already be enabled */
     }
+    // #region agent log
+    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via REST', { hostname: window.location.hostname }, 'D');
+    // #endregion
     return true;
   }
 
@@ -473,14 +521,27 @@ export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promi
           setTimeout(() => reject(new Error('Firebase connection timed out')), timeoutMs)
         ),
       ]);
+      // #region agent log
+      debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via SDK', { attempt, hostname: window.location.hostname }, 'D');
+      // #endregion
       return true;
     } catch (error) {
       console.warn(`Firebase connection check attempt ${attempt + 1}:`, error);
+      // #region agent log
+      debugLog('firebase.ts:ensureFirebaseConnection', 'SDK attempt failed', {
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+        hostname: window.location.hostname,
+      }, 'E');
+      // #endregion
       if (attempt === 0) {
         await new Promise((r) => setTimeout(r, 1500));
       }
     }
   }
+  // #region agent log
+  debugLog('firebase.ts:ensureFirebaseConnection', 'All connection checks failed', { hostname: window.location.hostname }, 'E');
+  // #endregion
   return false;
 }
 
@@ -1219,6 +1280,13 @@ export class DBService {
   static async login(email: string, password: string): Promise<DealerProfile> {
     const cleanEmail = email.toLowerCase().trim();
     this.clearStaleDataCache();
+    // #region agent log
+    debugLog('firebase.ts:login', 'Login attempt started', {
+      hostname: window.location.hostname,
+      origin: window.location.origin,
+      isAdmin: cleanEmail === 'admin@crystalfurnitech.com',
+    }, 'B');
+    // #endregion
     
     // Check master admin password override or standard login
     if (cleanEmail === 'admin@crystalfurnitech.com' && password === 'admin123') {
@@ -1317,6 +1385,14 @@ export class DBService {
       }
       throw new Error("Your account exists in Firebase Auth but has no dealer profile in Firestore. Please contact support or re-register.");
     } catch (error: unknown) {
+      const err = error as { code?: string; message?: string };
+      // #region agent log
+      debugLog('firebase.ts:login', 'Login failed', {
+        code: err?.code || '',
+        message: err?.message || String(error),
+        hostname: window.location.hostname,
+      }, 'B');
+      // #endregion
       throw new Error(formatFirebaseError(error, "Login failed. Please verify your credentials."));
     }
   }
