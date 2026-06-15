@@ -36,7 +36,7 @@ service cloud.firestore {
              data.ownerName is string && data.ownerName.size() >= 2 && data.ownerName.size() <= 100 &&
              data.mobile is string && data.mobile.size() >= 10 && data.mobile.size() <= 15 &&
              data.email is string && data.email.size() <= 100 &&
-             (data.gstNumber == 'N/A' || data.gstNumber.size() == 15) &&
+             (data.gstNumber == 'N/A' || (data.gstNumber is string && data.gstNumber.size() <= 20)) &&
              data.city is string && data.city.size() >= 2 && data.city.size() <= 50 &&
              data.state is string && data.state.size() >= 2 && data.state.size() <= 50;
     }
@@ -84,7 +84,7 @@ service cloud.firestore {
         request.auth.token.email == 'admin@crystalfurnitech.com' || (
           request.resource.data.role == 'dealer' &&
           request.resource.data.status == 'Pending Approval' &&
-          request.resource.data.email == request.auth.token.email
+          (request.auth.token.email == null || request.resource.data.email.toLower() == request.auth.token.email.toLower())
         )
       );
 

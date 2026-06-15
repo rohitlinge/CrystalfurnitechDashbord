@@ -26,7 +26,7 @@ export default function App() {
         // Test connection with a safe fast-timeout race
         await Promise.race([
           getDocFromServer(doc(db, 'test', 'connection')),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
         ]);
         console.log("Firestore connection check successful.");
       } catch (error: any) {

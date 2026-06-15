@@ -215,11 +215,78 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
 ];
 
 // Helper to protect database operations from hanging indefinitely due to network/configuration issues
-export function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 7000, errorMsg: string = "Firebase database request timed out. Please check your internet connection or verify your database setup."): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 18000, errorMsg: string = "Firebase database request timed out. Please check your internet connection or verify your database setup."): Promise<T> {
   return Promise.race([
     promise,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs))
   ]);
+}
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  }
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+export async function withErrorAndTimeout<T>(
+  promise: Promise<T>,
+  operationType: OperationType,
+  path: string,
+  timeoutMs: number = 18000,
+  errorMsg: string = "Firebase database request timed out. Please check your internet connection or verify your database setup."
+): Promise<T> {
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs))
+    ]);
+  } catch (error) {
+    if (error instanceof Error && error.message === errorMsg) {
+      throw error;
+    }
+    handleFirestoreError(error, operationType, path);
+  }
 }
 
 // Helper to determine if we are using Local Storage engine (e.g. if offline, rules fail, or for easy playgrounding)
@@ -326,7 +393,7 @@ export class DBService {
       console.log("Checking if categories need seeding in live Firestore...");
       const catsSnapshot = await withTimeout(
         getDocs(collection(db, 'categories')),
-        5000,
+        15000,
         "Categories query timed out during seeding."
       );
       if (catsSnapshot.empty) {
@@ -334,7 +401,7 @@ export class DBService {
         for (const cat of INITIAL_CATEGORIES) {
           await withTimeout(
             setDoc(doc(db, 'categories', cat.id), cat),
-            4000,
+            10000,
             `Seeding category ${cat.name} timed out.`
           );
         }
@@ -343,7 +410,7 @@ export class DBService {
       console.log("Checking if products need seeding in live Firestore...");
       const prodsSnapshot = await withTimeout(
         getDocs(collection(db, 'products')),
-        5000,
+        15000,
         "Products query timed out during seeding."
       );
       if (prodsSnapshot.empty) {
@@ -351,7 +418,7 @@ export class DBService {
         for (const prod of INITIAL_PRODUCTS) {
           await withTimeout(
             setDoc(doc(db, 'products', prod.id), prod),
-            4000,
+            10000,
             `Seeding product ${prod.name} timed out.`
           );
         }
@@ -381,7 +448,7 @@ export class DBService {
       try {
         const authResult = await withTimeout(
           signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-          6000,
+          20000,
           "Admin sign-in operation timed out."
         );
         fbUid = authResult.user.uid;
@@ -390,7 +457,7 @@ export class DBService {
         try {
           const authResult = await withTimeout(
             createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-            6000,
+            20000,
             "Admin registration operation timed out."
           );
           fbUid = authResult.user.uid;
@@ -423,7 +490,7 @@ export class DBService {
         // Ensure the dealers profile exists and is writeable
         await withTimeout(
           setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true }),
-          6000,
+          20000,
           "Writing Admin profile to Firestore timed out."
         );
         
@@ -703,16 +770,18 @@ export class DBService {
         // Attempt authenticating with real firebase with timeout limits
         const authResult = await withTimeout(
           createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
-          6000,
+          20000,
           "Authentication registration timed out. Please check your network connection and verify if the Firebase Auth service is responsive."
         );
         const fbUid = authResult.user.uid;
         newProfile.uid = fbUid;
         
         // Write info to Firestore with timeout limit
-        await withTimeout(
+        await withErrorAndTimeout(
           setDoc(doc(db, 'dealers', fbUid), newProfile),
-          6000,
+          OperationType.CREATE,
+          `dealers/${fbUid}`,
+          20000,
           "Database registration write timed out. This usually happens if the live Firestore connection is blocked, or the Security Rules are rejecting the write."
         );
       } catch (error: any) {
@@ -729,16 +798,18 @@ export class DBService {
             // Attempt to sign in with timeout limits
             const authResult = await withTimeout(
               signInWithEmailAndPassword(auth, cleanEmail, fields.password),
-              6000,
+              20000,
               "Authentication sign-in timed out during self-healing check."
             );
             const fbUid = authResult.user.uid;
             newProfile.uid = fbUid;
             
             // Re-write or self-correct registration info to Firestore with timeout limits
-            await withTimeout(
+            await withErrorAndTimeout(
               setDoc(doc(db, 'dealers', fbUid), newProfile),
-              6000,
+              OperationType.UPDATE,
+              `dealers/${fbUid}`,
+              20000,
               "Database self-healing update timed out. Please check your database rules."
             );
             console.log("Dealer document restored/updated successfully for user:", cleanEmail);
@@ -836,7 +907,7 @@ export class DBService {
       try {
         const authResult = await withTimeout(
           signInWithEmailAndPassword(auth, cleanEmail, password),
-          6000,
+          15000,
           "Login request timed out. Please check your network connection."
         );
         const fbUid = authResult.user.uid;
@@ -844,7 +915,7 @@ export class DBService {
         // Fetch profile
         const docSnap = await withTimeout(
           getDoc(doc(db, 'dealers', fbUid)),
-          5000,
+          10000,
           "Retrieving dealer profile timed out."
         );
         if (docSnap.exists()) {
