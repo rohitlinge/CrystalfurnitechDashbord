@@ -56,7 +56,12 @@ const databaseId = readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID') || firebaseApp
 function debugLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string, runId = 'post-fix') {
   const payload = { sessionId: 'a1718d', location, message, data, hypothesisId, timestamp: Date.now(), runId };
   // #region agent log
-  fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a1718d' }, body: JSON.stringify(payload) }).catch(() => {});
+  const isLocalHost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  if (isLocalHost) {
+    fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a1718d' }, body: JSON.stringify(payload) }).catch(() => {});
+  }
   // #endregion
   if (typeof window !== 'undefined') {
     const w = window as Window & { __CF_DEBUG__?: typeof payload[] };
@@ -98,8 +103,13 @@ export const db = initializeFirestore(
 let networkPrepared = false;
 async function prepareFirestoreWriteOnce(): Promise<void> {
   if (networkPrepared) return;
-  networkPrepared = true;
-  await enableNetwork(db);
+  try {
+    await enableNetwork(db);
+    networkPrepared = true;
+  } catch (err) {
+    networkPrepared = false;
+    throw err;
+  }
   if (!auth.currentUser) {
     await new Promise<void>((resolve) => {
       const unsub = onAuthStateChanged(auth, () => {
@@ -346,19 +356,8 @@ async function listCollectionRest<T>(
   existingToken?: string
 ): Promise<T[]> {
   const token = existingToken || (await getRestIdToken(requireAdmin));
-  const url =
-    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
-    `/databases/${encodeURIComponent(databaseId)}/documents/${collectionName}`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    throw new Error(`Failed to list ${collectionName} (${res.status}): ${await res.text()}`);
-  }
-  const data = (await res.json()) as { documents?: Array<{ name: string; fields: Record<string, unknown> }> };
-  if (!data.documents?.length) return [];
-  return data.documents.map((docItem) => ({
-    ...fromFirestoreRestFields(docItem.fields),
-    id: restDocIdFromName(docItem.name),
-  })) as T[];
+  // REST GET /documents/{collection} returns 403 with our split get/list rules — runQuery works.
+  return runQueryRest<T>(collectionName, '', null, token, true);
 }
 
 /** Firestore REST structured query — works on networks that block the WebSocket SDK. */
@@ -366,35 +365,38 @@ async function runQueryRest<T>(
   collectionName: string,
   fieldPath: string,
   value: unknown,
-  idToken: string
+  idToken: string,
+  listAll = false
 ): Promise<T[]> {
   const url =
     `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
     `/databases/${encodeURIComponent(databaseId)}/documents:runQuery`;
 
-  let fieldValue: Record<string, unknown>;
-  if (typeof value === 'boolean') fieldValue = { booleanValue: value };
-  else if (typeof value === 'number') {
-    fieldValue = Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
-  } else {
-    fieldValue = { stringValue: String(value) };
+  const structuredQuery: Record<string, unknown> = {
+    from: [{ collectionId: collectionName }],
+  };
+
+  if (!listAll && fieldPath) {
+    let fieldValue: Record<string, unknown>;
+    if (typeof value === 'boolean') fieldValue = { booleanValue: value };
+    else if (typeof value === 'number') {
+      fieldValue = Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+    } else {
+      fieldValue = { stringValue: String(value) };
+    }
+    structuredQuery.where = {
+      fieldFilter: {
+        field: { fieldPath },
+        op: 'EQUAL',
+        value: fieldValue,
+      },
+    };
   }
 
   const res = await fetch(url, {
     method: 'POST',
     headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      structuredQuery: {
-        from: [{ collectionId: collectionName }],
-        where: {
-          fieldFilter: {
-            field: { fieldPath },
-            op: 'EQUAL',
-            value: fieldValue,
-          },
-        },
-      },
-    }),
+    body: JSON.stringify({ structuredQuery }),
   });
 
   if (!res.ok) {
@@ -470,12 +472,69 @@ async function writeDealerProfileViaRest(uid: string, profile: DealerProfile, id
   await writeDocumentRest('dealers', uid, profile as unknown as Record<string, unknown>, idToken);
 }
 
-/** Setup hint for deployed hosts (Vercel, custom domains). */
-export function getFirebaseSetupHint(): string {
+let cachedAuthorizedDomains: string[] | null = null;
+
+async function fetchAuthorizedDomains(): Promise<string[]> {
+  if (cachedAuthorizedDomains) return cachedAuthorizedDomains;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as { authorizedDomains?: string[] };
+    cachedAuthorizedDomains = data.authorizedDomains || [];
+    return cachedAuthorizedDomains;
+  } catch {
+    return [];
+  }
+}
+
+/** Setup hint for deployed hosts when domain is not in Firebase Auth authorized domains. */
+export async function getFirebaseSetupHint(): Promise<string> {
   if (typeof window === 'undefined') return '';
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') return '';
+  const domains = await fetchAuthorizedDomains();
+  if (domains.includes(host)) return '';
   return `Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains. Also add https://${host}/* to Google Cloud → API key → HTTP referrers.`;
+}
+
+/** Runtime diagnostics for deployed troubleshooting — logs to sessionStorage. */
+export async function runFirebaseDiagnostics(): Promise<{ ok: boolean; lines: string[] }> {
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const lines: string[] = [];
+  let ok = true;
+
+  const domains = await fetchAuthorizedDomains();
+  const domainOk = domains.length === 0 || domains.includes(hostname);
+  lines.push(`Domain ${hostname}: ${domainOk ? 'authorized' : `NOT authorized (have: ${domains.join(', ')})`}`);
+  if (!domainOk) ok = false;
+
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'diagnostic@invalid.local', password: 'invalid', returnSecureToken: true }),
+      }
+    );
+    const body = (await res.json()) as { error?: { message?: string } };
+    const authReachable =
+      body.error?.message === 'INVALID_LOGIN_CREDENTIALS' ||
+      body.error?.message === 'EMAIL_NOT_FOUND' ||
+      res.ok;
+    lines.push(`Auth API: ${authReachable ? 'reachable' : body.error?.message || 'blocked'}`);
+    if (!authReachable) ok = false;
+  } catch (err) {
+    lines.push(`Auth API: ${err instanceof Error ? err.message : 'unreachable'}`);
+    ok = false;
+  }
+
+  // #region agent log
+  debugLog('firebase.ts:runFirebaseDiagnostics', 'Diagnostics complete', { hostname, ok, lines }, 'F');
+  // #endregion
+  return { ok, lines };
 }
 
 /** Ping Firestore REST API — used for localhost connectivity verification only. */
@@ -539,12 +598,16 @@ export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promi
   // Deployed (Vercel): REST ping uses API key in URL — often blocked by HTTP referrer rules.
   // Network is enabled; login will surface auth/domain errors if Firebase Console is not configured.
   if (!isLocal) {
+    const setupHint = await getFirebaseSetupHint();
+    const diagnostics = await runFirebaseDiagnostics();
     // #region agent log
     debugLog('firebase.ts:ensureFirebaseConnection', 'Deployed host — network ready', {
       hostname,
-      setupHint: getFirebaseSetupHint(),
+      setupHint,
+      diagnostics,
     }, 'C');
     // #endregion
+    if (setupHint) return false;
     return true;
   }
 
@@ -1214,6 +1277,12 @@ export class DBService {
   // --- Registration / Sign Up ---
   static async register(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
     const cleanEmail = fields.email.toLowerCase().trim();
+    // #region agent log
+    debugLog('firebase.ts:register', 'Registration started', {
+      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+      emailDomain: cleanEmail.split('@')[1] || '',
+    }, 'B');
+    // #endregion
     const newProfile: DealerProfile = {
       uid: '',
       companyName: fields.companyName,
@@ -1256,6 +1325,9 @@ export class DBService {
       } catch {
         /* ignore */
       }
+      // #region agent log
+      debugLog('firebase.ts:register', 'Registration success', { uid: newProfile.uid, hostname: window.location.hostname }, 'B');
+      // #endregion
     } catch (error: unknown) {
       const err = error as { code?: string; message?: string };
       console.error("Firebase Live Sign Up failed:", error);

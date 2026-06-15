@@ -22,7 +22,7 @@ export default function App() {
     if (connected) {
       setNetworkError(null);
     } else {
-      const hint = getFirebaseSetupHint();
+      const hint = await getFirebaseSetupHint();
       setNetworkError(
         hint ||
           "Could not reach Firebase Cloud Firestore. Click Retry or check your internet connection."
