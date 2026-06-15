@@ -31,9 +31,13 @@ export default function App() {
         console.log("Firestore connection check successful.");
       } catch (error: any) {
         const errorMsg = error?.message || '';
-        console.error("Firestore connection health check result:", error);
+        // Align with firebase-integration skill: Log friendly warning if client is offline, log info otherwise
+        if (errorMsg.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration.");
+        } else {
+          console.log("Firestore connection check info status:", errorMsg);
+        }
         if (errorMsg.includes('the client is offline') || errorMsg === 'timeout' || errorMsg.includes('failed-precondition') || errorMsg.includes('unavailable')) {
-          console.warn("Client connection verification offline status:", errorMsg);
           setNetworkError("Live sync with Google Cloud is pending. Please verify your connection.");
         }
       } finally {

@@ -8,7 +8,7 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
-  getFirestore, 
+  initializeFirestore, 
   collection, 
   doc, 
   getDoc, 
@@ -45,7 +45,7 @@ const databaseId = env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseAppletConf
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = getFirestore(app, databaseId);
+export const db = initializeFirestore(app, { experimentalForceLongPolling: true }, databaseId);
 
 // Initial Categories specification
 export const INITIAL_CATEGORIES: CategoryItem[] = [
