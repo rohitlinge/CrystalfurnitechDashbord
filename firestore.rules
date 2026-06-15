@@ -10,7 +10,7 @@ service cloud.firestore {
 
     // Helper: Check if document ID is formatted securely (ID Poisoning Guard)
     function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
     // Helper: Does the caller own the document?
@@ -131,11 +131,14 @@ service cloud.firestore {
         resource.data.dealerId == request.auth.uid || isAdmin()
       );
       
-      allow create: if isSignedIn() && 
-        isValidId(requirementId) &&
-        isValidRequirement(request.resource.data) &&
-        request.resource.data.dealerId == request.auth.uid &&
-        request.resource.data.status == 'Pending';
+      allow create: if isSignedIn() && isValidId(requirementId) && (
+        isAdmin() ||
+        (
+          isValidRequirement(request.resource.data) &&
+          request.resource.data.dealerId == request.auth.uid &&
+          request.resource.data.status == 'Pending'
+        )
+      );
 
       // Updates:
       // 1. Admin can change requirements or status.

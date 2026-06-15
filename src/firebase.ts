@@ -689,6 +689,35 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
   }
 ];
 
+/** Build sample stock requirements for an approved dealer + product. */
+export function buildInitialRequirements(dealer: DealerProfile, product: ProductItem): StockRequirement[] {
+  const productName = product.name.length >= 3 ? product.name : `${product.name} Item`;
+  return [
+    {
+      id: 'req_seed_1',
+      dealerId: dealer.uid,
+      dealerCompanyName: dealer.companyName,
+      productId: product.id,
+      productName,
+      quantityRequested: 10,
+      requestedDate: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+      status: 'Pending',
+      notes: 'Sample wholesale stock request — seeded for dashboard setup.'
+    },
+    {
+      id: 'req_seed_2',
+      dealerId: dealer.uid,
+      dealerCompanyName: dealer.companyName,
+      productId: product.id,
+      productName,
+      quantityRequested: 5,
+      requestedDate: new Date(Date.now() - 72 * 3600 * 1000).toISOString(),
+      status: 'Fulfilled',
+      notes: 'Sample fulfilled order — seeded for dashboard setup.'
+    }
+  ];
+}
+
 // Helper to protect database operations from hanging indefinitely due to network/configuration issues
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 18000, errorMsg: string = "Firebase database request timed out. Please check your internet connection or verify your database setup."): Promise<T> {
   return Promise.race([
@@ -822,6 +851,51 @@ export class DBService {
             )
           )
         );
+      }
+
+      console.log("Checking if requirements need seeding in live Firestore...");
+      const reqsSnapshot = await withTimeout(
+        getDocs(collection(db, 'requirements')),
+        15000,
+        "Requirements query timed out during seeding."
+      );
+      if (reqsSnapshot.empty) {
+        const dealersSnapshot = await withTimeout(
+          getDocs(collection(db, 'dealers')),
+          15000,
+          "Dealers query timed out during requirements seeding."
+        );
+        const dealerDoc = dealersSnapshot.docs.find((d) => {
+          const data = d.data() as DealerProfile;
+          return data.role === 'dealer' && data.status === 'Approved';
+        }) || dealersSnapshot.docs.find((d) => (d.data() as DealerProfile).role === 'dealer');
+
+        const productsSnapshot = prodsSnapshot.empty
+          ? await withTimeout(getDocs(collection(db, 'products')), 15000, "Products query timed out.")
+          : prodsSnapshot;
+
+        const productDoc = productsSnapshot.docs[0];
+        const product: ProductItem | null = productDoc
+          ? ({ ...productDoc.data(), id: (productDoc.data().id as string) || productDoc.id } as ProductItem)
+          : INITIAL_PRODUCTS[0] ?? null;
+
+        if (dealerDoc && product) {
+          const dealer = {
+            ...dealerDoc.data(),
+            uid: (dealerDoc.data().uid as string) || dealerDoc.id,
+          } as DealerProfile;
+          console.log("Seeding initial requirements into live Firestore...");
+          const sampleReqs = buildInitialRequirements(dealer, product);
+          for (const req of sampleReqs) {
+            await withTimeout(
+              setDoc(doc(db, 'requirements', req.id), req),
+              10000,
+              `Seeding requirement ${req.id} timed out.`
+            );
+          }
+        } else {
+          console.warn("Skipping requirements seed: need at least one dealer and one product.");
+        }
       }
     } catch (e) {
       console.warn("Could not seed initial collections, potentially due to rules or offline state:", e);
