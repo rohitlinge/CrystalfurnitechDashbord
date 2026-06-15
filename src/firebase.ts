@@ -53,8 +53,8 @@ const firebaseConfig = {
 const databaseId = readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID') || firebaseAppletConfig.firestoreDatabaseId;
 
 /** Debug instrumentation — session a1718d */
-function debugLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string) {
-  const payload = { sessionId: 'a1718d', location, message, data, hypothesisId, timestamp: Date.now(), runId: 'pre-fix' };
+function debugLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string, runId = 'post-fix') {
+  const payload = { sessionId: 'a1718d', location, message, data, hypothesisId, timestamp: Date.now(), runId };
   // #region agent log
   fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a1718d' }, body: JSON.stringify(payload) }).catch(() => {});
   // #endregion
@@ -78,7 +78,7 @@ debugLog('firebase.ts:init', 'Firebase config loaded', {
     dbFromEnv: !!readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID'),
   },
   apiKeyPrefix: firebaseConfig.apiKey?.slice(0, 8),
-}, 'A');
+}, 'A', 'pre-fix');
 // #endregion
 
 // Initialize Firebase
@@ -462,6 +462,36 @@ async function writeDealerProfileViaRest(uid: string, profile: DealerProfile, id
   await writeDocumentRest('dealers', uid, profile as unknown as Record<string, unknown>, idToken);
 }
 
+/** Ping Firebase Hosting init.json — no API key in URL, avoids referrer restrictions on Vercel. */
+async function checkFirebaseInitJson(timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = `https://${firebaseConfig.authDomain}/__/firebase/init.json`;
+    const res = await fetch(url, { signal: controller.signal });
+    const ok = res.ok;
+    // #region agent log
+    debugLog('firebase.ts:checkFirebaseInitJson', 'Auth init.json ping', {
+      status: res.status,
+      ok,
+      authDomain: firebaseConfig.authDomain,
+      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+    }, 'C');
+    // #endregion
+    return ok;
+  } catch (err) {
+    // #region agent log
+    debugLog('firebase.ts:checkFirebaseInitJson', 'Auth init.json ping failed', {
+      error: err instanceof Error ? err.message : String(err),
+      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+    }, 'C');
+    // #endregion
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Ping Firestore REST API — reliable in browsers (avoids SDK offline false-negatives). */
 async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
   const controller = new AbortController();
@@ -498,7 +528,20 @@ async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
 
 /** Ensure Firestore network is enabled and verify cloud connectivity. */
 export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promise<boolean> {
-  // REST ping first — fast and avoids SDK "client is offline" false alarms
+  // Hosting init.json first — works on Vercel without API-key referrer restrictions
+  if (await checkFirebaseInitJson(Math.min(timeoutMs, 8000))) {
+    try {
+      await enableNetwork(db);
+    } catch {
+      /* network may already be enabled */
+    }
+    // #region agent log
+    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via init.json', { hostname: window.location.hostname }, 'C');
+    // #endregion
+    return true;
+  }
+
+  // REST ping — may fail on Vercel if API key HTTP referrers exclude this domain
   if (await checkFirestoreViaRest(Math.min(timeoutMs, 12000))) {
     try {
       await enableNetwork(db);
@@ -569,13 +612,22 @@ function formatFirebaseError(error: unknown, fallback: string): string {
     return 'Firestore database not found. Verify firestoreDatabaseId in firebase-applet-config.json matches your Firebase project.';
   }
   if (message.includes('timed out') || message.includes('offline') || code === 'unavailable') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    const setupHint = host && host !== 'localhost'
+      ? ` Add "${host}" to Firebase Auth → Authorized domains AND Google Cloud → API key HTTP referrers (https://${host}/*).`
+      : '';
     if (message.includes('profile')) {
-      return 'Could not load your dealer profile. Check your internet connection, disable VPN if active, and try again.';
+      return `Could not load your dealer profile. Check your internet connection and try again.${setupHint}`;
     }
-    return 'Could not reach Firebase. Check your internet connection, try another network, or disable VPN and retry.';
+    return `Could not reach Firebase. Check your internet connection and try again.${setupHint}`;
   }
   if (code === 'auth/unauthorized-domain') {
-    return 'This website domain is not authorized in Firebase. Add your Vercel URL under Firebase Console → Authentication → Settings → Authorized domains.';
+    const host = typeof window !== 'undefined' ? window.location.hostname : 'your-domain';
+    return `This site (${host}) is not authorized in Firebase. Add "${host}" under Firebase Console → Authentication → Settings → Authorized domains.`;
+  }
+  if (code === 'auth/network-request-failed') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    return `Network error reaching Firebase Auth${host ? ` from ${host}` : ''}. Check internet connection and Firebase Authorized domains.`;
   }
   if (message.includes('API key') || message.includes('API_KEY')) {
     return 'Firebase API key is blocked for this domain. In Google Cloud Console, add your site URL to API key HTTP referrer restrictions.';
