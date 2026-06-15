@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DBService } from '../firebase';
-import { DealerProfile, ProductItem, StockRequirement } from '../types';
+import { DealerProfile, ProductItem, StockRequirement, CategoryItem } from '../types';
 import { 
   Building, MapPin, Truck, RefreshCw, Send, ClipboardCheck, LayoutGrid, Search, 
   Info, LogOut, Package2, ShieldCheck, ShoppingCart, Calendar, CheckCircle, Clock, X, SlidersHorizontal,
@@ -14,6 +14,7 @@ interface DealerDashboardProps {
 
 export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboardProps) {
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [myRequirements, setMyRequirements] = useState<StockRequirement[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -38,10 +39,13 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
   const fetchData = async () => {
     setLoading(true);
     try {
-      const prodList = await DBService.getProducts();
+      const [catList, prodList, reqList] = await Promise.all([
+        DBService.getCategories(),
+        DBService.getProducts(),
+        DBService.getStockRequirements(dealerUser.uid),
+      ]);
+      setCategories(catList);
       setProducts(prodList);
-
-      const reqList = await DBService.getStockRequirements(dealerUser.uid);
       setMyRequirements(reqList);
     } catch (e) {
       console.error(e);
@@ -114,9 +118,13 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
     });
   };
 
-  // Get distinct categories (only from active products)
+  // Categories from Firestore (same source as admin dashboard)
+  const activeCategoryNames = categories.filter(c => c.isActive !== false).map(c => c.name);
   const activeProducts = products.filter(p => p.isActive !== false);
-  const categories = ['All', ...new Set(activeProducts.map(p => p.category))];
+  const categoryFilterOptions = activeCategoryNames.length > 0
+    ? activeCategoryNames
+    : [...new Set(activeProducts.map(p => p.category))];
+  const categoryTabs = ['All', ...categoryFilterOptions];
 
   // Filtering products
   const filteredProducts = activeProducts.filter(p => {
@@ -216,7 +224,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
 
               {/* Filters list */}
               <div className="flex flex-wrap gap-1.5 bg-[#09090b] border border-[#27272a] p-1 rounded-lg scrollbar-none overflow-x-auto max-w-full">
-                {categories.map((cat) => (
+                {categoryTabs.map((cat) => (
                   <button
                     key={cat}
                     type="button"

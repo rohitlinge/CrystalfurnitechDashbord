@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { DBService, ensureFirebaseConnection } from './firebase';
+import { DBService, ensureFirebaseConnection, auth } from './firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { DealerProfile } from './types';
 import Login from './components/Login';
 import Register from './components/Register';
@@ -30,19 +31,40 @@ export default function App() {
     recheckFirebaseConnection();
   }, [recheckFirebaseConnection]);
 
-  // Initialize auth state from local persisted cached session on initial load
+  // Restore session and validate Firebase Auth matches stored profile
   useEffect(() => {
-    const active = DBService.getActiveUser();
-    if (active) {
-      setCurrentUser(active);
-      if (active.role === 'admin') {
-        setCurrentScreen('admin');
-      } else {
-        setCurrentScreen('dealer');
-      }
+    const stored = DBService.getActiveUser();
+    if (stored) {
+      setCurrentUser(stored);
+      setCurrentScreen(stored.role === 'admin' ? 'admin' : 'dealer');
     } else {
       setCurrentScreen('login');
     }
+
+    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
+      const active = DBService.getActiveUser();
+      if (!active) {
+        if (!firebaseUser) setCurrentScreen('login');
+        return;
+      }
+
+      if (!firebaseUser) {
+        DBService.logout();
+        setCurrentUser(null);
+        setCurrentScreen('login');
+        return;
+      }
+
+      const uidMatches = firebaseUser.uid === active.uid;
+      const adminEmailMatch = active.role === 'admin' && firebaseUser.email === active.email;
+      if (!uidMatches && !adminEmailMatch) {
+        DBService.logout();
+        setCurrentUser(null);
+        setCurrentScreen('login');
+      }
+    });
+
+    return () => unsub();
   }, []);
 
   const handleLoginSuccess = (user: DealerProfile) => {

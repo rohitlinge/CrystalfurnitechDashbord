@@ -18,9 +18,11 @@ import {
   getDocs, 
   query, 
   where,
-  orderBy,
   deleteDoc,
-  runTransaction
+  runTransaction,
+  type QueryConstraint,
+  type DocumentSnapshot,
+  type QuerySnapshot
 } from 'firebase/firestore';
 import { getStorage, ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem } from './types';
@@ -67,6 +69,82 @@ async function prepareFirestoreWrite(): Promise<void> {
 
 // Keep Firestore online from app start
 prepareFirestoreWrite().catch(() => {});
+
+/** Ensure the user is signed in before Firestore reads/writes. */
+async function ensureAuthenticated(): Promise<void> {
+  await prepareFirestoreWrite();
+  if (auth.currentUser) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsub();
+      reject(new Error('Not authenticated with Firebase. Please log in again.'));
+    }, 8000);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        clearTimeout(timer);
+        unsub();
+        resolve();
+      }
+    });
+  });
+}
+
+/** Ensure admin Firebase Auth session for privileged operations. */
+async function ensureAdminAuthenticated(): Promise<void> {
+  await prepareFirestoreWrite();
+  if (auth.currentUser?.email !== 'admin@crystalfurnitech.com') {
+    await withTimeout(
+      signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+      12000,
+      'Admin session required. Please log in again.'
+    );
+  }
+  if (!auth.currentUser) {
+    throw new Error('Admin session required. Please log in again.');
+  }
+}
+
+function mapDocSnapshot<T>(snap: DocumentSnapshot): T | null {
+  if (!snap.exists()) return null;
+  const data = snap.data() as Record<string, unknown>;
+  return { ...data, id: (data.id as string) || snap.id } as T;
+}
+
+function mapQuerySnapshot<T>(snapshot: QuerySnapshot): T[] {
+  return snapshot.docs.map((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return { ...data, id: (data.id as string) || d.id } as T;
+  });
+}
+
+/** Read a Firestore collection via SDK — single source of truth for all dashboards. */
+async function fetchCollection<T>(
+  collectionName: string,
+  constraints: QueryConstraint[] = [],
+  timeoutMsg?: string
+): Promise<T[]> {
+  await ensureAuthenticated();
+  const colRef = collection(db, collectionName);
+  const snapshot = constraints.length
+    ? await withTimeout(
+        getDocs(query(colRef, ...constraints)),
+        15000,
+        timeoutMsg || `${collectionName} request timed out.`
+      )
+    : await withTimeout(
+        getDocs(colRef),
+        15000,
+        timeoutMsg || `${collectionName} request timed out.`
+      );
+  return mapQuerySnapshot<T>(snapshot);
+}
+
+/** Extract document ID from Firestore REST document name path. */
+function restDocIdFromName(name: string): string {
+  const parts = name.split('/');
+  return parts[parts.length - 1] || name;
+}
 
 /** Convert a plain object to Firestore REST API field format. */
 function toFirestoreRestFields(data: Record<string, unknown>): Record<string, unknown> {
@@ -145,7 +223,10 @@ async function listCollectionRest<T>(collectionName: string, requireAdmin = fals
   }
   const data = (await res.json()) as { documents?: Array<{ name: string; fields: Record<string, unknown> }> };
   if (!data.documents?.length) return [];
-  return data.documents.map((doc) => fromFirestoreRestFields(doc.fields) as T);
+  return data.documents.map((docItem) => ({
+    ...fromFirestoreRestFields(docItem.fields),
+    id: restDocIdFromName(docItem.name),
+  })) as T[];
 }
 
 async function writeDocumentRest(
@@ -549,83 +630,6 @@ const setStorageItem = <T>(key: string, value: T): void => {
   localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
 };
 
-// Initialize Local Mock Database if not present
-if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'dealers')) {
-  // Pre-seed some mock dealers for the admin dashboard demo
-  const initialDealers: DealerProfile[] = [
-    {
-      uid: 'dealer-demo-pending',
-      companyName: 'Apex Woodcraft B2B',
-      ownerName: 'Harish Kumar',
-      mobile: '9876543210',
-      email: 'dealer.pending@crystalfurnitech.com',
-      gstNumber: '27AAAAA1111A1Z1',
-      city: 'Mumbai',
-      state: 'Maharashtra',
-      address: '204 Industrial Estate, Andheri East, Mumbai',
-      status: 'Pending Approval',
-      registrationDate: new Date(Date.now() - 48 * 3600 * 1000).toISOString(),
-      role: 'dealer'
-    },
-    {
-      uid: 'dealer-demo-approved',
-      companyName: 'Grand Decors & Interiors',
-      ownerName: 'Preeti Sharma',
-      mobile: '9988776655',
-      email: 'dealer.approved@crystalfurnitech.com',
-      gstNumber: '07BBBBB2222B2Z2',
-      city: 'New Delhi',
-      state: 'Delhi',
-      address: 'F-12 Furniture Market, Kirti Nagar, New Delhi',
-      status: 'Approved',
-      registrationDate: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
-      role: 'dealer'
-    },
-    {
-      uid: 'dealer-demo-rejected',
-      companyName: 'Elite Home Solutions',
-      ownerName: 'Vikas Patel',
-      mobile: '9123456789',
-      email: 'dealer.rejected@crystalfurnitech.com',
-      gstNumber: '24CCCCC3333C3Z3',
-      city: 'Ahmedabad',
-      state: 'Gujarat',
-      address: 'C-509 Titanium Plaza, SG Highway, Ahmedabad',
-      status: 'Rejected',
-      registrationDate: new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString(),
-      role: 'dealer',
-      rejectionReason: 'Invalid GST Registration Certificate and owner could not verify state details during telephone vetting.'
-    }
-  ];
-  setStorageItem('dealers', initialDealers);
-}
-
-// Initial stock requirements
-if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'requirements')) {
-  const initialRequirements: StockRequirement[] = [
-    {
-      id: 'req-1',
-      dealerId: 'dealer-demo-approved',
-      dealerCompanyName: 'Grand Decors & Interiors',
-      productId: 'prod-1',
-      productName: 'Royal Premium Executive Desk',
-      quantityRequested: 15,
-      requestedDate: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-      status: 'Pending',
-      notes: 'Urgent restocking needed for key institutional corporate clients in NCR.'
-    }
-  ];
-  setStorageItem('requirements', initialRequirements);
-}
-
-if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'categories')) {
-  setStorageItem('categories', INITIAL_CATEGORIES);
-}
-
-if (!localStorage.getItem(STORAGE_KEY_PREFIX + 'products')) {
-  setStorageItem('products', INITIAL_PRODUCTS);
-}
-
 // Core DB & Auth Service Class
 export class DBService {
   // --- Seed Database to Firestore ---
@@ -765,183 +769,121 @@ export class DBService {
     setStorageItem('active_user', user);
   }
 
+  /** Remove stale cached business data so dashboards always read from Firestore. */
+  static clearStaleDataCache() {
+    ['products', 'categories', 'dealers', 'requirements', 'credentials', 'use_mock'].forEach((key) => {
+      localStorage.removeItem(STORAGE_KEY_PREFIX + key);
+    });
+  }
+
   // --- Categories CRM ---
   static async getCategories(): Promise<CategoryItem[]> {
-    const isMock = this.isMockMode();
-    if (!isMock) {
-      try {
-        const fetchedCats = await withTimeout(
-          listCollectionRest<CategoryItem>('categories'),
-          15000,
-          'Categories request timed out.'
-        );
-        fetchedCats.sort((a, b) => a.name.localeCompare(b.name));
-        if (fetchedCats.length > 0) {
-          setStorageItem('categories', fetchedCats);
-          return fetchedCats;
-        }
-      } catch (error) {
-        console.warn('REST categories fetch failed:', error);
-      }
-    }
-    return getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
+    const fetchedCats = await fetchCollection<CategoryItem>('categories');
+    fetchedCats.sort((a, b) => a.name.localeCompare(b.name));
+    return fetchedCats;
   }
 
   static async createCategory(fields: Omit<CategoryItem, 'id' | 'createdDate'>): Promise<CategoryItem> {
-    const isMock = this.isMockMode();
+    await ensureAdminAuthenticated();
     const newCat: CategoryItem = {
       ...fields,
       id: 'cat-' + Math.random().toString(36).substring(2, 11),
       createdDate: new Date().toISOString()
     };
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await withTimeout(
-        writeDocumentRest('categories', newCat.id, newCat as unknown as Record<string, unknown>, token),
-        15000,
-        'Failed to save category to Firebase.'
-      );
-    }
-
-    const cats = getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
-    cats.push(newCat);
-    setStorageItem('categories', cats);
+    await withTimeout(
+      setDoc(doc(db, 'categories', newCat.id), newCat),
+      15000,
+      'Failed to save category to Firebase.'
+    );
     return newCat;
   }
 
   static async updateCategory(id: string, fields: Partial<CategoryItem>): Promise<void> {
-    const isMock = this.isMockMode();
-    const cats = getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
-    const updated = cats.map(c => c.id === id ? { ...c, ...fields } : c);
-    setStorageItem('categories', updated);
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await withTimeout(
-        patchDocumentRest('categories', id, fields as Record<string, unknown>, token),
-        15000,
-        'Failed to update category in Firebase.'
-      );
-    }
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      updateDoc(doc(db, 'categories', id), fields),
+      15000,
+      'Failed to update category in Firebase.'
+    );
   }
 
   static async deleteCategory(id: string): Promise<void> {
-    const isMock = this.isMockMode();
-    const cats = getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
-    setStorageItem('categories', cats.filter(c => c.id !== id));
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await deleteDocumentRest('categories', id, token);
-    }
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'categories', id)),
+      15000,
+      'Failed to delete category from Firebase.'
+    );
   }
 
   // --- Products CRM ---
   static async getProducts(): Promise<ProductItem[]> {
-    const isMock = this.isMockMode();
-    if (!isMock) {
-      try {
-        const fetchedProds = await withTimeout(
-          listCollectionRest<ProductItem>('products'),
-          15000,
-          'Products request timed out.'
-        );
-        fetchedProds.sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime());
-        if (fetchedProds.length > 0) {
-          setStorageItem('products', fetchedProds);
-          return fetchedProds;
-        }
-      } catch (error) {
-        console.warn('REST products fetch failed:', error);
-      }
-    }
-    return getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
+    const fetchedProds = await fetchCollection<ProductItem>('products');
+    fetchedProds.sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime());
+    return fetchedProds;
   }
 
   static async createProduct(fields: Omit<ProductItem, 'id' | 'createdDate'>): Promise<ProductItem> {
-    const isMock = this.isMockMode();
+    await ensureAdminAuthenticated();
     const newProd: ProductItem = {
       ...fields,
       id: 'prod-' + Math.random().toString(36).substring(2, 11),
       createdDate: new Date().toISOString()
     };
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await withTimeout(
-        writeDocumentRest('products', newProd.id, newProd as unknown as Record<string, unknown>, token),
-        15000,
-        'Failed to save product to Firebase.'
-      );
-    }
-
-    const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
-    prods.unshift(newProd);
-    setStorageItem('products', prods);
+    await withTimeout(
+      setDoc(doc(db, 'products', newProd.id), newProd),
+      15000,
+      'Failed to save product to Firebase.'
+    );
     return newProd;
   }
 
   static async updateProduct(id: string, fields: Partial<ProductItem>): Promise<void> {
-    const isMock = this.isMockMode();
-    const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
-    const updated = prods.map(p => p.id === id ? { ...p, ...fields } : p);
-    setStorageItem('products', updated);
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await withTimeout(
-        patchDocumentRest('products', id, fields as Record<string, unknown>, token),
-        15000,
-        'Failed to update product in Firebase.'
-      );
-    }
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      updateDoc(doc(db, 'products', id), fields),
+      15000,
+      'Failed to update product in Firebase.'
+    );
   }
 
   static async deleteProduct(id: string): Promise<void> {
-    const isMock = this.isMockMode();
-    const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
-    setStorageItem('products', prods.filter(p => p.id !== id));
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await deleteDocumentRest('products', id, token);
-    }
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'products', id)),
+      15000,
+      'Failed to delete product from Firebase.'
+    );
   }
 
   // --- Upload Images Helper ---
   static async uploadProductImage(fileOrBase64: File | string, sku: string, index: number): Promise<string> {
-    const isMock = this.isMockMode();
     const fileName = `${sku}_img_${index}_${Date.now()}`;
     
     if (typeof fileOrBase64 === 'string') {
       if (fileOrBase64.startsWith('data:')) {
-        if (!isMock) {
-          try {
-            await getRestIdToken(true);
-            const storage = getStorage();
-            const storageRef = ref(storage, `products/${fileName}`);
-            await withTimeout(uploadString(storageRef, fileOrBase64, 'data_url'), 30000, 'Image upload timed out.');
-            return await getDownloadURL(storageRef);
-          } catch (e) {
-            console.error("Firebase Storage upload failed, using embedded image:", e);
-          }
+        try {
+          await ensureAdminAuthenticated();
+          const storage = getStorage();
+          const storageRef = ref(storage, `products/${fileName}`);
+          await withTimeout(uploadString(storageRef, fileOrBase64, 'data_url'), 30000, 'Image upload timed out.');
+          return await getDownloadURL(storageRef);
+        } catch (e) {
+          console.error("Firebase Storage upload failed, using embedded image:", e);
         }
         return fileOrBase64;
       }
       return fileOrBase64;
     }
 
-    if (!isMock) {
-      try {
-        await getRestIdToken(true);
-        const storage = getStorage();
-        const storageRef = ref(storage, `products/${fileName}`);
-        await withTimeout(uploadBytes(storageRef, fileOrBase64), 30000, 'Image upload timed out.');
-        return await getDownloadURL(storageRef);
-      } catch (e) {
-        console.error("Firebase Storage file upload failed, falling back to local base64:", e);
-      }
+    try {
+      await ensureAdminAuthenticated();
+      const storage = getStorage();
+      const storageRef = ref(storage, `products/${fileName}`);
+      await withTimeout(uploadBytes(storageRef, fileOrBase64), 30000, 'Image upload timed out.');
+      return await getDownloadURL(storageRef);
+    } catch (e) {
+      console.error("Firebase Storage file upload failed, falling back to local base64:", e);
     }
 
     return new Promise((resolve) => {
@@ -952,31 +894,25 @@ export class DBService {
   }
 
   static async uploadProductFile(file: File, sku: string, folderName: 'sheets' | 'brochures' | 'products'): Promise<string> {
-    const isMock = this.isMockMode();
     const fileName = `${sku}_${folderName}_${Date.now()}_${file.name}`;
     
-    if (!isMock) {
-      try {
-        await getRestIdToken(true);
-        const storage = getStorage();
-        const storageRef = ref(storage, `${folderName}/${fileName}`);
-        await withTimeout(uploadBytes(storageRef, file), 30000, 'File upload timed out.');
-        return await getDownloadURL(storageRef);
-      } catch (e) {
-        console.error("Firebase Storage file upload failed, fallback to local object URL:", e);
-      }
+    try {
+      await ensureAdminAuthenticated();
+      const storage = getStorage();
+      const storageRef = ref(storage, `${folderName}/${fileName}`);
+      await withTimeout(uploadBytes(storageRef, file), 30000, 'File upload timed out.');
+      return await getDownloadURL(storageRef);
+    } catch (e) {
+      console.error("Firebase Storage file upload failed:", e);
+      throw new Error(formatFirebaseError(e, 'File upload failed. Check Storage rules and connection.'));
     }
-    
-    return URL.createObjectURL(file);
   }
 
   // --- Registration / Sign Up ---
   static async register(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
-    const isMock = this.isMockMode();
-    const mockUid = 'dealer-' + Math.random().toString(36).substring(2, 11);
     const cleanEmail = fields.email.toLowerCase().trim();
     const newProfile: DealerProfile = {
-      uid: mockUid,
+      uid: '',
       companyName: fields.companyName,
       ownerName: fields.ownerName,
       mobile: fields.mobile,
@@ -990,86 +926,67 @@ export class DBService {
       role: 'dealer'
     };
 
-    if (!isMock) {
+    try {
       try {
+        await fbSignOut(auth);
+      } catch {
+        /* no active session */
+      }
+
+      const authResult = await withTimeout(
+        createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
+        15000,
+        "Authentication registration timed out."
+      );
+      const fbUid = authResult.user.uid;
+      newProfile.uid = fbUid;
+
+      await withTimeout(
+        setDoc(doc(db, 'dealers', fbUid), newProfile),
+        15000,
+        "Saving dealer profile timed out."
+      );
+
+      try {
+        await fbSignOut(auth);
+      } catch {
+        /* ignore */
+      }
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string };
+      console.error("Firebase Live Sign Up failed:", error);
+      
+      if (
+        err?.code === 'auth/email-already-in-use' ||
+        err?.message?.includes('email-already-in-use') ||
+        err?.message?.includes('auth/email-already-in-use')
+      ) {
         try {
-          await fbSignOut(auth);
-        } catch {
-          /* no active session */
-        }
-
-        const authResult = await withTimeout(
-          createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
-          15000,
-          "Authentication registration timed out."
-        );
-        const fbUid = authResult.user.uid;
-        newProfile.uid = fbUid;
-
-        const idToken = await authResult.user.getIdToken();
-        await withTimeout(
-          writeDealerProfileViaRest(fbUid, newProfile, idToken),
-          15000,
-          "Saving dealer profile timed out."
-        );
-
-        try {
-          await fbSignOut(auth);
-        } catch {
-          /* ignore */
-        }
-      } catch (error: any) {
-        console.error("Firebase Live Sign Up failed:", error);
-        
-        // Check if the email is already registered
-        if (
-          error?.code === 'auth/email-already-in-use' ||
-          error?.message?.includes('email-already-in-use') ||
-          error?.message?.includes('auth/email-already-in-use')
-        ) {
+          const authResult = await withTimeout(
+            signInWithEmailAndPassword(auth, cleanEmail, fields.password),
+            15000,
+            "Authentication sign-in timed out."
+          );
+          const fbUid = authResult.user.uid;
+          newProfile.uid = fbUid;
+          await withTimeout(
+            setDoc(doc(db, 'dealers', fbUid), newProfile, { merge: true }),
+            15000,
+            "Database profile update timed out."
+          );
           try {
-            console.log("Email already in use. Checking if credentials are valid to restore/heal dealer document in Firestore...");
-            // Attempt to sign in with timeout limits
-            const authResult = await withTimeout(
-              signInWithEmailAndPassword(auth, cleanEmail, fields.password),
-              15000,
-              "Authentication sign-in timed out."
-            );
-            const fbUid = authResult.user.uid;
-            newProfile.uid = fbUid;
-            const idToken = await authResult.user.getIdToken();
-            await withTimeout(
-              writeDealerProfileViaRest(fbUid, newProfile, idToken),
-              15000,
-              "Database profile update timed out."
-            );
-            try {
-              await fbSignOut(auth);
-            } catch {
-              /* ignore */
-            }
-            console.log("Dealer document restored/updated successfully for user:", cleanEmail);
-          } catch (signInErr: any) {
-            console.error("Failed to recover existing auth user via sign in:", signInErr);
-            throw new Error("This email is already registered with a different password. Please check your credentials or complete registration with the correct password.");
+            await fbSignOut(auth);
+          } catch {
+            /* ignore */
           }
-        } else {
-          throw new Error(formatFirebaseError(error, "Firebase registration failed. Please ensure Firestore security rules are deployed and your connection is active."));
+        } catch (signInErr: unknown) {
+          console.error("Failed to recover existing auth user via sign in:", signInErr);
+          throw new Error("This email is already registered with a different password. Please check your credentials or complete registration with the correct password.");
         }
+      } else {
+        throw new Error(formatFirebaseError(error, "Firebase registration failed. Please ensure Firestore security rules are deployed and your connection is active."));
       }
     }
-
-    // Save mock record in all cases to guarantee local robustness
-    const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    // Prevent duplicates
-    const filtered = dealers.filter(d => d.email.toLowerCase() !== cleanEmail);
-    filtered.push(newProfile);
-    setStorageItem('dealers', filtered);
-
-    // Save passwords locally in mock database for demo login purposes
-    const passwords = getStorageItem<Record<string, string>>('credentials', {});
-    passwords[cleanEmail] = fields.password;
-    setStorageItem('credentials', passwords);
 
     return newProfile;
   }
@@ -1077,6 +994,7 @@ export class DBService {
   // --- Login ---
   static async login(email: string, password: string): Promise<DealerProfile> {
     const cleanEmail = email.toLowerCase().trim();
+    this.clearStaleDataCache();
     
     // Check master admin password override or standard login
     if (cleanEmail === 'admin@crystalfurnitech.com' && password === 'admin123') {
@@ -1095,56 +1013,53 @@ export class DBService {
         role: 'admin'
       };
 
-      const isMock = this.isMockMode();
-      if (!isMock) {
+      try {
+        const authResult = await withTimeout(
+          signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+          12000,
+          "Admin sign-in timed out. Please check your connection."
+        );
+        const fbUid = authResult.user.uid;
+        adminProfile.uid = fbUid;
+
         try {
-          const authResult = await withTimeout(
-            signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-            12000,
-            "Admin sign-in timed out. Please check your connection."
+          const liveSnap = await withTimeout(
+            getDoc(doc(db, 'dealers', fbUid)),
+            10000,
+            "Admin profile fetch timed out."
           );
-          const fbUid = authResult.user.uid;
-          adminProfile.uid = fbUid;
+          const liveProfile = mapDocSnapshot<DealerProfile>(liveSnap);
+          if (liveProfile) {
+            Object.assign(adminProfile, liveProfile);
+          }
+        } catch {
+          /* use built-in admin profile */
+        }
 
+        setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true }).catch((fsErr) =>
+          console.warn("Background admin profile sync:", fsErr)
+        );
+      } catch (signInErr: unknown) {
+        const err = signInErr as { code?: string };
+        if (
+          err.code === 'auth/user-not-found' ||
+          err.code === 'auth/invalid-credential' ||
+          err.code === 'auth/invalid-email' ||
+          err.code === 'auth/user-disabled'
+        ) {
           try {
-            const idToken = await authResult.user.getIdToken();
-            const liveProfile = await withTimeout(
-              getDocumentRest<DealerProfile>('dealers', fbUid, idToken),
-              10000,
-              "Admin profile fetch timed out."
+            const authResult = await withTimeout(
+              createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+              12000,
+              "Admin registration timed out."
             );
-            if (liveProfile) {
-              Object.assign(adminProfile, liveProfile);
-            }
-          } catch {
-            /* use built-in admin profile */
+            adminProfile.uid = authResult.user.uid;
+            setDoc(doc(db, 'dealers', authResult.user.uid), adminProfile, { merge: true }).catch(console.warn);
+          } catch (createErr) {
+            throw new Error(formatFirebaseError(createErr, "Could not sign in or create admin account."));
           }
-
-          // Sync profile in background — never block login on Firestore writes
-          setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true }).catch((fsErr) =>
-            console.warn("Background admin profile sync:", fsErr)
-          );
-        } catch (signInErr: any) {
-          if (
-            signInErr.code === 'auth/user-not-found' ||
-            signInErr.code === 'auth/invalid-credential' ||
-            signInErr.code === 'auth/invalid-email' ||
-            signInErr.code === 'auth/user-disabled'
-          ) {
-            try {
-              const authResult = await withTimeout(
-                createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-                12000,
-                "Admin registration timed out."
-              );
-              adminProfile.uid = authResult.user.uid;
-              setDoc(doc(db, 'dealers', authResult.user.uid), adminProfile, { merge: true }).catch(console.warn);
-            } catch (createErr) {
-              throw new Error(formatFirebaseError(createErr, "Could not sign in or create admin account."));
-            }
-          } else {
-            throw new Error(formatFirebaseError(signInErr, "Admin login failed."));
-          }
+        } else {
+          throw new Error(formatFirebaseError(signInErr, "Admin login failed."));
         }
       }
 
@@ -1152,93 +1067,37 @@ export class DBService {
       return adminProfile;
     }
 
-    const isMock = this.isMockMode();
-    const isDemoDealerEmail = (
-      cleanEmail === 'dealer.pending@crystalfurnitech.com' ||
-      cleanEmail === 'dealer.approved@crystalfurnitech.com' ||
-      cleanEmail === 'dealer.rejected@crystalfurnitech.com'
-    );
+    try {
+      const authResult = await withTimeout(
+        signInWithEmailAndPassword(auth, cleanEmail, password),
+        15000,
+        "Login request timed out. Please check your network connection."
+      );
+      const fbUid = authResult.user.uid;
 
-    if (!isMock) {
-      try {
-        const authResult = await withTimeout(
-          signInWithEmailAndPassword(auth, cleanEmail, password),
-          15000,
-          "Login request timed out. Please check your network connection."
-        );
-        const fbUid = authResult.user.uid;
-        const idToken = await authResult.user.getIdToken();
-
-        const profile = await withTimeout(
-          getDocumentRest<DealerProfile>('dealers', fbUid, idToken),
-          15000,
-          "Retrieving dealer profile timed out."
-        );
-        if (profile) {
-          this.setActiveUser(profile);
-          return profile;
-        }
-        throw new Error("Your account exists in Firebase Auth but has no dealer profile in Firestore. Please contact support or re-register.");
-      } catch (error: unknown) {
-        const err = error as { code?: string; message?: string };
-        if (isDemoDealerEmail) {
-          console.warn("Demo dealer login falling back to local preview data:", err?.message);
-        } else if (err?.code?.startsWith('auth/') || err?.message?.includes('dealer profile')) {
-          throw new Error(formatFirebaseError(error, "Login failed. Please verify your credentials."));
-        } else {
-          console.error("Firebase Login failed:", error);
-          throw new Error(formatFirebaseError(error, "Could not sign in with Firebase. Check your connection and Firestore rules."));
-        }
+      const profileSnap = await withTimeout(
+        getDoc(doc(db, 'dealers', fbUid)),
+        15000,
+        "Retrieving dealer profile timed out."
+      );
+      const profile = mapDocSnapshot<DealerProfile>(profileSnap);
+      if (profile) {
+        this.setActiveUser(profile);
+        return profile;
       }
+      throw new Error("Your account exists in Firebase Auth but has no dealer profile in Firestore. Please contact support or re-register.");
+    } catch (error: unknown) {
+      throw new Error(formatFirebaseError(error, "Login failed. Please verify your credentials."));
     }
-
-    // Fall back to Mock validation
-    const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    const foundDealer = dealers.find(d => d.email.toLowerCase() === cleanEmail);
-    if (!foundDealer) {
-      throw new Error("No company registered with this email address.");
-    }
-
-    const passwords = getStorageItem<Record<string, string>>('credentials', {});
-    const savedPassword = passwords[cleanEmail] || 'dealer123'; // Default fallback backdoors for preseeds
-    
-    // Check seeded test users
-    if (cleanEmail === 'dealer.pending@crystalfurnitech.com' || 
-        cleanEmail === 'dealer.approved@crystalfurnitech.com' || 
-        cleanEmail === 'dealer.rejected@crystalfurnitech.com') {
-      // Allow any password for pre-seeded test accounts to make reviewing instant and hassle-free
-      this.setActiveUser(foundDealer);
-      return foundDealer;
-    }
-
-    if (password !== savedPassword) {
-      throw new Error("Incorrect login password. Please check your credentials.");
-    }
-
-    this.setActiveUser(foundDealer);
-    return foundDealer;
   }
 
   // --- Fetch Dealers (Admin Action) ---
   static async getDealers(): Promise<DealerProfile[]> {
-    const isMock = this.isMockMode();
-    if (!isMock) {
-      try {
-        const all = await withTimeout(
-          listCollectionRest<DealerProfile>('dealers', true),
-          15000,
-          'Dealers request timed out.'
-        );
-        const fetchedDealers = all
-          .filter((d) => d.role === 'dealer')
-          .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
-        setStorageItem('dealers', fetchedDealers);
-        return fetchedDealers;
-      } catch (error) {
-        console.warn('REST dealers fetch failed:', error);
-      }
-    }
-    return getStorageItem<DealerProfile[]>('dealers', []).filter((d) => d.role === 'dealer');
+    await ensureAdminAuthenticated();
+    const all = await fetchCollection<DealerProfile>('dealers');
+    return all
+      .filter((d) => d.role === 'dealer')
+      .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
   }
 
   static async updateDealerStatus(
@@ -1246,60 +1105,36 @@ export class DBService {
     status: DealerStatus, 
     reason?: { rejectReason?: string; suspendReason?: string }
   ): Promise<void> {
-    const isMock = this.isMockMode();
-    
-    const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    const updated = dealers.map(d => {
-      if (d.uid === uid) {
-        const item: DealerProfile = {
-          ...d,
-          status,
-          rejectionReason: status === 'Rejected' ? (reason?.rejectReason || 'Does not satisfy wholesale volume metrics.') : undefined,
-          suspensionReason: status === 'Suspended' ? (reason?.suspendReason || 'Suspended due to prolonged payment inactivity.') : undefined
-        };
-        const active = this.getActiveUser();
-        if (active && active.uid === uid) {
-          this.setActiveUser(item);
-        }
-        return item;
-      }
-      return d;
-    });
-    setStorageItem('dealers', updated);
+    await ensureAdminAuthenticated();
+    const updates: Record<string, unknown> = { status };
+    if (status === 'Rejected') {
+      updates.rejectionReason = reason?.rejectReason || 'Does not satisfy market metrics.';
+    } else if (status === 'Suspended') {
+      updates.suspensionReason = reason?.suspendReason || 'Suspended.';
+    }
+    await withTimeout(
+      updateDoc(doc(db, 'dealers', uid), updates),
+      15000,
+      'Failed to update dealer status in Firebase.'
+    );
 
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      const updates: Record<string, unknown> = { status };
-      if (status === 'Rejected') {
-        updates.rejectionReason = reason?.rejectReason || 'Does not satisfy market metrics.';
-      } else if (status === 'Suspended') {
-        updates.suspensionReason = reason?.suspendReason || 'Suspended.';
-      }
-      await withTimeout(
-        patchDocumentRest('dealers', uid, updates, token),
-        15000,
-        'Failed to update dealer status in Firebase.'
-      );
+    const active = this.getActiveUser();
+    if (active && active.uid === uid) {
+      this.setActiveUser({ ...active, ...updates } as DealerProfile);
     }
   }
 
   static async deleteDealer(uid: string): Promise<void> {
-    const isMock = this.isMockMode();
-    
-    const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    setStorageItem('dealers', dealers.filter(d => d.uid !== uid));
-
-    const reqs = getStorageItem<StockRequirement[]>('requirements', []);
-    setStorageItem('requirements', reqs.filter(r => r.dealerId !== uid));
-
-    if (!isMock) {
-      const token = await getRestIdToken(true);
-      await deleteDocumentRest('dealers', uid, token);
-    }
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'dealers', uid)),
+      15000,
+      'Failed to delete dealer from Firebase.'
+    );
   }
 
   static async addDealer(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
-    const isMock = this.isMockMode();
+    await ensureAdminAuthenticated();
     const cleanEmail = fields.email.toLowerCase().trim();
     const newProfile: DealerProfile = {
       uid: '',
@@ -1316,76 +1151,55 @@ export class DBService {
       role: 'dealer'
     };
 
-    if (!isMock) {
-      let fbUid = '';
-      let dealerToken = '';
+    let fbUid = '';
+    try {
       try {
-        try {
+        const authResult = await withTimeout(
+          createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
+          15000,
+          'Creating dealer auth account timed out.'
+        );
+        fbUid = authResult.user.uid;
+      } catch (authError: unknown) {
+        const err = authError as { code?: string; message?: string };
+        if (
+          err?.code === 'auth/email-already-in-use' ||
+          err?.message?.includes('email-already-in-use')
+        ) {
           const authResult = await withTimeout(
-            createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
+            signInWithEmailAndPassword(auth, cleanEmail, fields.password),
             15000,
-            'Creating dealer auth account timed out.'
+            'Signing in existing dealer timed out.'
           );
           fbUid = authResult.user.uid;
-          dealerToken = await authResult.user.getIdToken();
-        } catch (authError: any) {
-          if (
-            authError?.code === 'auth/email-already-in-use' ||
-            authError?.message?.includes('email-already-in-use')
-          ) {
-            const authResult = await withTimeout(
-              signInWithEmailAndPassword(auth, cleanEmail, fields.password),
-              15000,
-              'Signing in existing dealer timed out.'
-            );
-            fbUid = authResult.user.uid;
-            dealerToken = await authResult.user.getIdToken();
-          } else {
-            throw authError;
-          }
+        } else {
+          throw authError;
         }
-
-        newProfile.uid = fbUid;
-        const pendingProfile: DealerProfile = { ...newProfile, status: 'Pending Approval' };
-        await withTimeout(
-          writeDealerProfileViaRest(fbUid, pendingProfile, dealerToken),
-          15000,
-          'Saving dealer profile timed out.'
-        );
-
-        const adminToken = await getRestIdToken(true);
-        await withTimeout(
-          patchDocumentRest('dealers', fbUid, { status: 'Approved' }, adminToken),
-          15000,
-          'Approving dealer timed out.'
-        );
-      } catch (error: any) {
-        try {
-          await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
-        } catch {
-          /* ignore */
-        }
-        throw new Error(formatFirebaseError(error, 'Failed to add dealer.'));
       }
-    } else {
-      newProfile.uid = 'dealer-' + Math.random().toString(36).substring(2, 11);
+
+      newProfile.uid = fbUid;
+      await withTimeout(
+        setDoc(doc(db, 'dealers', fbUid), { ...newProfile, status: 'Approved' }),
+        15000,
+        'Saving dealer profile timed out.'
+      );
+
+      await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+    } catch (error: unknown) {
+      try {
+        await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+      } catch {
+        /* ignore */
+      }
+      throw new Error(formatFirebaseError(error, 'Failed to add dealer.'));
     }
-
-    const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    const filtered = dealers.filter(d => d.email.toLowerCase() !== cleanEmail);
-    filtered.unshift(newProfile);
-    setStorageItem('dealers', filtered);
-
-    const passwords = getStorageItem<Record<string, string>>('credentials', {});
-    passwords[cleanEmail] = fields.password;
-    setStorageItem('credentials', passwords);
 
     return newProfile;
   }
 
   // --- Submit Stock Requirement (Dealer Action) ---
   static async submitStockRequirement(reqData: Omit<StockRequirement, 'id' | 'requestedDate' | 'status'>): Promise<StockRequirement> {
-    const isMock = this.isMockMode();
+    await ensureAuthenticated();
     const newReqId = 'req-' + Math.random().toString(36).substring(2, 11);
     const newReq: StockRequirement = {
       ...reqData,
@@ -1394,198 +1208,107 @@ export class DBService {
       status: 'Pending'
     };
 
-    // Save local
-    const reqs = getStorageItem<StockRequirement[]>('requirements', []);
-    reqs.unshift(newReq);
-    setStorageItem('requirements', reqs);
-
-    // Also update local product stock
-    const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
-    const updatedProds = prods.map(p => {
-      if (p.id === reqData.productId) {
-        const nextStock = Math.max(0, p.availableStock - reqData.quantityRequested);
-        return {
-          ...p,
-          availableStock: nextStock,
-          stockStatus: nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock' as any,
-          status: nextStock === 0 ? 'Out Of Stock' : 'Available' as any
-        };
+    await runTransaction(db, async (transaction) => {
+      const productRef = doc(db, 'products', reqData.productId);
+      const productDoc = await transaction.get(productRef);
+      
+      if (!productDoc.exists()) {
+        throw new Error("Product does not exist.");
       }
-      return p;
+      
+      const productData = productDoc.data() as ProductItem;
+      const currentStock = productData.availableStock || 0;
+      
+      if (currentStock < reqData.quantityRequested) {
+        throw new Error(`Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`);
+      }
+      
+      const nextStock = currentStock - reqData.quantityRequested;
+      const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+      const status = nextStock === 0 ? 'Out Of Stock' : 'Available';
+      
+      const reqRef = doc(db, 'requirements', newReqId);
+      
+      transaction.set(reqRef, newReq);
+      transaction.update(productRef, {
+        availableStock: nextStock,
+        stockStatus,
+        status
+      });
     });
-    setStorageItem('products', updatedProds);
-
-    if (!isMock) {
-      try {
-        await runTransaction(db, async (transaction) => {
-          const productRef = doc(db, 'products', reqData.productId);
-          const productDoc = await transaction.get(productRef);
-          
-          if (!productDoc.exists()) {
-            throw new Error("Product does not exist.");
-          }
-          
-          const productData = productDoc.data() as ProductItem;
-          const currentStock = productData.availableStock || 0;
-          
-          if (currentStock < reqData.quantityRequested) {
-            throw new Error(`Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`);
-          }
-          
-          const nextStock = currentStock - reqData.quantityRequested;
-          const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-          const status = nextStock === 0 ? 'Out Of Stock' : 'Available';
-          
-          // Create the requirement document
-          const reqRef = doc(db, 'requirements', newReqId);
-          
-          transaction.set(reqRef, newReq);
-          transaction.update(productRef, {
-            availableStock: nextStock,
-            stockStatus,
-            status
-          });
-        });
-      } catch (error: any) {
-        console.error("Firestore Transaction failed, reverting local stock change:", error);
-        throw error;
-      }
-    }
 
     return newReq;
   }
 
   // --- Fetch Stock Requirements ---
   static async getStockRequirements(dealerId?: string): Promise<StockRequirement[]> {
-    const isMock = this.isMockMode();
-    if (!isMock) {
-      try {
-        const fetchedReqs = await withTimeout(
-          listCollectionRest<StockRequirement>('requirements', !dealerId),
-          15000,
-          'Stock requirements request timed out.'
-        );
-        const filtered = dealerId
-          ? fetchedReqs.filter((r) => r.dealerId === dealerId)
-          : fetchedReqs;
-        if (filtered.length > 0) {
-          return filtered;
-        }
-      } catch (error) {
-        console.warn('REST requirements fetch failed, using local:', error);
-      }
+    if (dealerId) {
+      const reqs = await fetchCollection<StockRequirement>(
+        'requirements',
+        [where('dealerId', '==', dealerId)],
+        'Stock requirements request timed out.'
+      );
+      return reqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
     }
 
-    const allReqs = getStorageItem<StockRequirement[]>('requirements', []);
-    if (dealerId) {
-      return allReqs.filter(r => r.dealerId === dealerId);
-    }
-    return allReqs;
+    await ensureAdminAuthenticated();
+    const allReqs = await fetchCollection<StockRequirement>('requirements');
+    return allReqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
   }
 
   // --- Update Stock Requirement Status (Admin Action) ---
   static async updateStockRequirementStatus(id: string, status: 'Pending' | 'Fulfilled' | 'Cancelled'): Promise<void> {
-    const isMock = this.isMockMode();
-    
-    // Update local
-    const reqs = getStorageItem<StockRequirement[]>('requirements', []);
-    let returnedQty = 0;
-    let prodId = '';
+    await ensureAuthenticated();
 
-    const updated = reqs.map(r => {
-      if (r.id === id) {
-        if (r.status === 'Pending' && status === 'Cancelled') {
-          returnedQty = r.quantityRequested;
-          prodId = r.productId;
-        }
-        return { ...r, status };
+    await runTransaction(db, async (transaction) => {
+      const reqRef = doc(db, 'requirements', id);
+      const reqDoc = await transaction.get(reqRef);
+      
+      if (!reqDoc.exists()) {
+        throw new Error("Requirement does not exist.");
       }
-      return r;
-    });
-    setStorageItem('requirements', updated);
-
-    if (returnedQty > 0 && prodId) {
-      const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
-      const updatedProds = prods.map(p => {
-        if (p.id === prodId) {
-          const nextStock = p.availableStock + returnedQty;
-          return {
-            ...p,
-            availableStock: nextStock,
-            stockStatus: nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock' as any,
-            status: nextStock === 0 ? 'Out Of Stock' : 'Available' as any
-          };
-        }
-        return p;
-      });
-      setStorageItem('products', updatedProds);
-    }
-
-    if (!isMock) {
-      try {
-        await runTransaction(db, async (transaction) => {
-          const reqRef = doc(db, 'requirements', id);
-          const reqDoc = await transaction.get(reqRef);
+      
+      const reqData = reqDoc.data() as StockRequirement;
+      const oldStatus = reqData.status;
+      
+      if (oldStatus !== status) {
+        transaction.update(reqRef, { status });
+        
+        if (oldStatus === 'Pending' && status === 'Cancelled') {
+          const productRef = doc(db, 'products', reqData.productId);
+          const productDoc = await transaction.get(productRef);
           
-          if (!reqDoc.exists()) {
-            throw new Error("Requirement does not exist.");
-          }
-          
-          const reqData = reqDoc.data() as StockRequirement;
-          const oldStatus = reqData.status;
-          
-          if (oldStatus !== status) {
-            transaction.update(reqRef, { status });
+          if (productDoc.exists()) {
+            const productData = productDoc.data() as ProductItem;
+            const nextStock = (productData.availableStock || 0) + reqData.quantityRequested;
+            const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+            const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
             
-            // If transition from Pending to Cancelled, return the reserved stock
-            if (oldStatus === 'Pending' && status === 'Cancelled') {
-              const productRef = doc(db, 'products', reqData.productId);
-              const productDoc = await transaction.get(productRef);
-              
-              if (productDoc.exists()) {
-                const productData = productDoc.data() as ProductItem;
-                const nextStock = (productData.availableStock || 0) + reqData.quantityRequested;
-                const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-                const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
-                
-                transaction.update(productRef, {
-                  availableStock: nextStock,
-                  stockStatus,
-                  status: prodStatus
-                });
-              }
-            }
+            transaction.update(productRef, {
+              availableStock: nextStock,
+              stockStatus,
+              status: prodStatus
+            });
           }
-        });
-      } catch (error) {
-        console.error("Failed updating Firestore requirement status with transaction:", error);
-        throw error;
+        }
       }
-    }
+    });
   }
 
   // --- Delete Stock Requirement (Admin Action) ---
   static async deleteStockRequirement(id: string): Promise<void> {
-    const isMock = this.isMockMode();
-    
-    // Delete local
-    const reqs = getStorageItem<StockRequirement[]>('requirements', []);
-    const filtered = reqs.filter(r => r.id !== id);
-    setStorageItem('requirements', filtered);
-
-    if (!isMock) {
-      try {
-        await deleteDoc(doc(db, 'requirements', id));
-      } catch (error) {
-        console.error("Failed to delete stock requirement from Live Firestore:", error);
-        throw error;
-      }
-    }
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'requirements', id)),
+      15000,
+      'Failed to delete stock requirement from Firebase.'
+    );
   }
 
   // --- Logout ---
   static logout() {
     this.setActiveUser(null);
+    this.clearStaleDataCache();
     try {
       fbSignOut(auth);
     } catch {}
