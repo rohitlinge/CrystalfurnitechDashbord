@@ -55,10 +55,10 @@ const databaseId = readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID') || firebaseApp
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-// Force long polling — more reliable on corporate/mobile networks that block WebSockets
+// Force long polling — reliable on networks that block WebSockets (do not combine with autoDetect)
 export const db = initializeFirestore(
   app,
-  { experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: true },
+  { experimentalForceLongPolling: true },
   databaseId
 );
 
