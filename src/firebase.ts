@@ -20,7 +20,6 @@ import {
   where,
   deleteDoc,
   runTransaction,
-  type QueryConstraint,
   type DocumentSnapshot,
   type QuerySnapshot
 } from 'firebase/firestore';
@@ -33,22 +32,35 @@ import firebaseAppletConfig from '../firebase-applet-config.json';
 // with fallback to the local compiled firebase-applet-config.json representation.
 const env = (import.meta as any).env || {};
 
+/** Treat empty Vercel env vars as unset so fallback config is used. */
+function readEnv(key: string): string | undefined {
+  const val = env[key];
+  if (val === undefined || val === null) return undefined;
+  const trimmed = String(val).trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || firebaseAppletConfig.apiKey,
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || firebaseAppletConfig.authDomain,
-  projectId: env.VITE_FIREBASE_PROJECT_ID || firebaseAppletConfig.projectId,
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseAppletConfig.storageBucket,
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseAppletConfig.messagingSenderId,
-  appId: env.VITE_FIREBASE_APP_ID || firebaseAppletConfig.appId,
-  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || firebaseAppletConfig.measurementId || ""
+  apiKey: readEnv('VITE_FIREBASE_API_KEY') || firebaseAppletConfig.apiKey,
+  authDomain: readEnv('VITE_FIREBASE_AUTH_DOMAIN') || firebaseAppletConfig.authDomain,
+  projectId: readEnv('VITE_FIREBASE_PROJECT_ID') || firebaseAppletConfig.projectId,
+  storageBucket: readEnv('VITE_FIREBASE_STORAGE_BUCKET') || firebaseAppletConfig.storageBucket,
+  messagingSenderId: readEnv('VITE_FIREBASE_MESSAGING_SENDER_ID') || firebaseAppletConfig.messagingSenderId,
+  appId: readEnv('VITE_FIREBASE_APP_ID') || firebaseAppletConfig.appId,
+  measurementId: readEnv('VITE_FIREBASE_MEASUREMENT_ID') || firebaseAppletConfig.measurementId || ""
 };
 
-const databaseId = env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseAppletConfig.firestoreDatabaseId;
+const databaseId = readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID') || firebaseAppletConfig.firestoreDatabaseId;
 
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, databaseId);
+// Force long polling — more reliable on corporate/mobile networks that block WebSockets
+export const db = initializeFirestore(
+  app,
+  { experimentalForceLongPolling: true, experimentalAutoDetectLongPolling: true },
+  databaseId
+);
 
 /** Wake Firestore network layer and wait until Auth token is ready for writes. */
 async function prepareFirestoreWrite(): Promise<void> {
@@ -70,8 +82,21 @@ async function prepareFirestoreWrite(): Promise<void> {
 // Keep Firestore online from app start
 prepareFirestoreWrite().catch(() => {});
 
+/** Wait until Firebase Auth has resolved the initial persisted session. */
+function waitForAuthReady(): Promise<void> {
+  return new Promise((resolve) => {
+    const unsub = onAuthStateChanged(auth, () => {
+      unsub();
+      resolve();
+    });
+  });
+}
+
+export { waitForAuthReady };
+
 /** Ensure the user is signed in before Firestore reads/writes. */
 async function ensureAuthenticated(): Promise<void> {
+  await waitForAuthReady();
   await prepareFirestoreWrite();
   if (auth.currentUser) return;
 
@@ -79,7 +104,7 @@ async function ensureAuthenticated(): Promise<void> {
     const timer = setTimeout(() => {
       unsub();
       reject(new Error('Not authenticated with Firebase. Please log in again.'));
-    }, 8000);
+    }, 12000);
     const unsub = onAuthStateChanged(auth, (user) => {
       if (user) {
         clearTimeout(timer);
@@ -88,6 +113,19 @@ async function ensureAuthenticated(): Promise<void> {
       }
     });
   });
+}
+
+const FIRESTORE_READ_TIMEOUT_MS = 30000;
+
+/** Retry an async operation once after a short delay (helps flaky mobile networks). */
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await fn();
+  } catch (firstError) {
+    console.warn(`${label} failed, retrying once:`, firstError);
+    await new Promise((r) => setTimeout(r, 1200));
+    return fn();
+  }
 }
 
 /** Ensure admin Firebase Auth session for privileged operations. */
@@ -118,26 +156,79 @@ function mapQuerySnapshot<T>(snapshot: QuerySnapshot): T[] {
   });
 }
 
-/** Read a Firestore collection via SDK — single source of truth for all dashboards. */
+/** Read a Firestore collection — REST first (HTTPS), SDK fallback. */
 async function fetchCollection<T>(
   collectionName: string,
-  constraints: QueryConstraint[] = [],
-  timeoutMsg?: string
+  options: {
+    timeoutMsg?: string;
+    requireAdmin?: boolean;
+    filterField?: string;
+    filterValue?: unknown;
+  } = {}
 ): Promise<T[]> {
   await ensureAuthenticated();
-  const colRef = collection(db, collectionName);
-  const snapshot = constraints.length
-    ? await withTimeout(
-        getDocs(query(colRef, ...constraints)),
-        15000,
-        timeoutMsg || `${collectionName} request timed out.`
-      )
-    : await withTimeout(
-        getDocs(colRef),
-        15000,
-        timeoutMsg || `${collectionName} request timed out.`
+  const msg = options.timeoutMsg || `${collectionName} request timed out.`;
+  const idToken = await auth.currentUser!.getIdToken(true);
+
+  if (options.filterField && options.filterValue !== undefined) {
+    try {
+      return await withRetry(
+        () =>
+          withTimeout(
+            runQueryRest<T>(collectionName, options.filterField!, options.filterValue, idToken),
+            FIRESTORE_READ_TIMEOUT_MS,
+            msg
+          ),
+        `REST query ${collectionName}`
       );
+    } catch (restError) {
+      console.warn(`REST query ${collectionName} failed, trying SDK:`, restError);
+      const colRef = collection(db, collectionName);
+      const snapshot = await withTimeout(
+        getDocs(query(colRef, where(options.filterField, '==', options.filterValue))),
+        FIRESTORE_READ_TIMEOUT_MS,
+        msg
+      );
+      return mapQuerySnapshot<T>(snapshot);
+    }
+  }
+
+  try {
+    return await withRetry(
+      () =>
+        withTimeout(
+          listCollectionRest<T>(collectionName, options.requireAdmin ?? false, idToken),
+          FIRESTORE_READ_TIMEOUT_MS,
+          msg
+        ),
+      `REST list ${collectionName}`
+    );
+  } catch (restError) {
+    console.warn(`REST list ${collectionName} failed, trying SDK:`, restError);
+  }
+
+  const colRef = collection(db, collectionName);
+  const snapshot = await withTimeout(getDocs(colRef), FIRESTORE_READ_TIMEOUT_MS, msg);
   return mapQuerySnapshot<T>(snapshot);
+}
+
+/** Read a single Firestore document — REST first (HTTPS), SDK fallback. */
+async function getDocument<T>(collectionName: string, docId: string, timeoutMsg?: string): Promise<T | null> {
+  await ensureAuthenticated();
+  const msg = timeoutMsg || `Reading ${collectionName}/${docId} timed out.`;
+  const idToken = await auth.currentUser!.getIdToken(true);
+
+  try {
+    return await withRetry(
+      () => withTimeout(getDocumentRest<T>(collectionName, docId, idToken), FIRESTORE_READ_TIMEOUT_MS, msg),
+      `REST get ${collectionName}/${docId}`
+    );
+  } catch (restError) {
+    console.warn(`REST get ${collectionName}/${docId} failed, trying SDK:`, restError);
+  }
+
+  const snap = await withTimeout(getDoc(doc(db, collectionName, docId)), FIRESTORE_READ_TIMEOUT_MS, msg);
+  return mapDocSnapshot<T>(snap);
 }
 
 /** Extract document ID from Firestore REST document name path. */
@@ -212,8 +303,12 @@ async function getDocumentRest<T>(collection: string, docId: string, idToken: st
   return fromFirestoreRestFields(data.fields) as T;
 }
 
-async function listCollectionRest<T>(collectionName: string, requireAdmin = false): Promise<T[]> {
-  const token = await getRestIdToken(requireAdmin);
+async function listCollectionRest<T>(
+  collectionName: string,
+  requireAdmin = false,
+  existingToken?: string
+): Promise<T[]> {
+  const token = existingToken || (await getRestIdToken(requireAdmin));
   const url =
     `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
     `/databases/${encodeURIComponent(databaseId)}/documents/${collectionName}`;
@@ -227,6 +322,55 @@ async function listCollectionRest<T>(collectionName: string, requireAdmin = fals
     ...fromFirestoreRestFields(docItem.fields),
     id: restDocIdFromName(docItem.name),
   })) as T[];
+}
+
+/** Firestore REST structured query — works on networks that block the WebSocket SDK. */
+async function runQueryRest<T>(
+  collectionName: string,
+  fieldPath: string,
+  value: unknown,
+  idToken: string
+): Promise<T[]> {
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(databaseId)}/documents:runQuery`;
+
+  let fieldValue: Record<string, unknown>;
+  if (typeof value === 'boolean') fieldValue = { booleanValue: value };
+  else if (typeof value === 'number') {
+    fieldValue = Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  } else {
+    fieldValue = { stringValue: String(value) };
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: collectionName }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath },
+            op: 'EQUAL',
+            value: fieldValue,
+          },
+        },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to query ${collectionName} (${res.status}): ${await res.text()}`);
+  }
+
+  const rows = (await res.json()) as Array<{ document?: { name: string; fields: Record<string, unknown> } }>;
+  return rows
+    .filter((row) => row.document)
+    .map((row) => ({
+      ...fromFirestoreRestFields(row.document!.fields),
+      id: restDocIdFromName(row.document!.name),
+    })) as T[];
 }
 
 async function writeDocumentRest(
@@ -346,7 +490,7 @@ function formatFirebaseError(error: unknown, fallback: string): string {
   const message = err?.message || fallback;
 
   if (code === 'permission-denied' || message.includes('PERMISSION_DENIED')) {
-    return 'Firestore denied this action. Run "npm run deploy:rules" to deploy security rules, then try again.';
+    return 'Firestore denied this action. Your account may not have access, or security rules need updating. Contact admin or run "npm run deploy:rules".';
   }
   if (code === 'auth/email-already-in-use') {
     return 'This email is already registered. Please sign in or use a different email.';
@@ -363,11 +507,17 @@ function formatFirebaseError(error: unknown, fallback: string): string {
   if (code === 'not-found' || message.includes('NOT_FOUND')) {
     return 'Firestore database not found. Verify firestoreDatabaseId in firebase-applet-config.json matches your Firebase project.';
   }
-  if (message.includes('timed out') || message.includes('offline')) {
+  if (message.includes('timed out') || message.includes('offline') || code === 'unavailable') {
     if (message.includes('profile')) {
-      return 'Could not load your dealer profile. Please try again or contact support.';
+      return 'Could not load your dealer profile. Check your internet connection, disable VPN if active, and try again.';
     }
-    return 'Could not reach Firebase. Check your internet connection and try again.';
+    return 'Could not reach Firebase. Check your internet connection, try another network, or disable VPN and retry.';
+  }
+  if (code === 'auth/unauthorized-domain') {
+    return 'This website domain is not authorized in Firebase. Add your Vercel URL under Firebase Console → Authentication → Settings → Authorized domains.';
+  }
+  if (message.includes('API key') || message.includes('API_KEY')) {
+    return 'Firebase API key is blocked for this domain. In Google Cloud Console, add your site URL to API key HTTP referrer restrictions.';
   }
   return message;
 }
@@ -1023,12 +1173,15 @@ export class DBService {
         adminProfile.uid = fbUid;
 
         try {
-          const liveSnap = await withTimeout(
-            getDoc(doc(db, 'dealers', fbUid)),
-            10000,
-            "Admin profile fetch timed out."
+          const liveProfile = await withRetry(
+            () =>
+              getDocument<DealerProfile>(
+                'dealers',
+                fbUid,
+                'Admin profile fetch timed out.'
+              ),
+            'Admin profile fetch'
           );
-          const liveProfile = mapDocSnapshot<DealerProfile>(liveSnap);
           if (liveProfile) {
             Object.assign(adminProfile, liveProfile);
           }
@@ -1075,12 +1228,15 @@ export class DBService {
       );
       const fbUid = authResult.user.uid;
 
-      const profileSnap = await withTimeout(
-        getDoc(doc(db, 'dealers', fbUid)),
-        15000,
-        "Retrieving dealer profile timed out."
+      const profile = await withRetry(
+        () =>
+          getDocument<DealerProfile>(
+            'dealers',
+            fbUid,
+            'Retrieving dealer profile timed out.'
+          ),
+        'Dealer profile fetch'
       );
-      const profile = mapDocSnapshot<DealerProfile>(profileSnap);
       if (profile) {
         this.setActiveUser(profile);
         return profile;
@@ -1094,7 +1250,7 @@ export class DBService {
   // --- Fetch Dealers (Admin Action) ---
   static async getDealers(): Promise<DealerProfile[]> {
     await ensureAdminAuthenticated();
-    const all = await fetchCollection<DealerProfile>('dealers');
+    const all = await fetchCollection<DealerProfile>('dealers', { requireAdmin: true });
     return all
       .filter((d) => d.role === 'dealer')
       .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
@@ -1243,16 +1399,19 @@ export class DBService {
   // --- Fetch Stock Requirements ---
   static async getStockRequirements(dealerId?: string): Promise<StockRequirement[]> {
     if (dealerId) {
-      const reqs = await fetchCollection<StockRequirement>(
-        'requirements',
-        [where('dealerId', '==', dealerId)],
-        'Stock requirements request timed out.'
-      );
+      const reqs = await fetchCollection<StockRequirement>('requirements', {
+        filterField: 'dealerId',
+        filterValue: dealerId,
+        timeoutMsg: 'Stock requirements request timed out.',
+      });
       return reqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
     }
 
     await ensureAdminAuthenticated();
-    const allReqs = await fetchCollection<StockRequirement>('requirements');
+    const allReqs = await fetchCollection<StockRequirement>('requirements', {
+      requireAdmin: true,
+      timeoutMsg: 'Stock requirements request timed out.',
+    });
     return allReqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
   }
 

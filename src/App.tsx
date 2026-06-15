@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { DBService, ensureFirebaseConnection, auth } from './firebase';
+import { DBService, ensureFirebaseConnection, auth, waitForAuthReady } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { DealerProfile } from './types';
 import Login from './components/Login';
@@ -31,40 +31,44 @@ export default function App() {
     recheckFirebaseConnection();
   }, [recheckFirebaseConnection]);
 
-  // Restore session and validate Firebase Auth matches stored profile
+  // Restore session after Firebase Auth finishes initializing (avoids false logouts)
   useEffect(() => {
-    const stored = DBService.getActiveUser();
-    if (stored) {
-      setCurrentUser(stored);
-      setCurrentScreen(stored.role === 'admin' ? 'admin' : 'dealer');
-    } else {
-      setCurrentScreen('login');
-    }
+    let unsub: (() => void) | undefined;
 
-    const unsub = onAuthStateChanged(auth, (firebaseUser) => {
-      const active = DBService.getActiveUser();
-      if (!active) {
-        if (!firebaseUser) setCurrentScreen('login');
-        return;
-      }
-
-      if (!firebaseUser) {
-        DBService.logout();
-        setCurrentUser(null);
-        setCurrentScreen('login');
-        return;
-      }
-
-      const uidMatches = firebaseUser.uid === active.uid;
-      const adminEmailMatch = active.role === 'admin' && firebaseUser.email === active.email;
-      if (!uidMatches && !adminEmailMatch) {
-        DBService.logout();
-        setCurrentUser(null);
+    waitForAuthReady().then(() => {
+      const stored = DBService.getActiveUser();
+      if (stored) {
+        setCurrentUser(stored);
+        setCurrentScreen(stored.role === 'admin' ? 'admin' : 'dealer');
+      } else {
         setCurrentScreen('login');
       }
+
+      unsub = onAuthStateChanged(auth, (firebaseUser) => {
+        const active = DBService.getActiveUser();
+        if (!active) {
+          if (!firebaseUser) setCurrentScreen('login');
+          return;
+        }
+
+        if (!firebaseUser) {
+          DBService.logout();
+          setCurrentUser(null);
+          setCurrentScreen('login');
+          return;
+        }
+
+        const uidMatches = firebaseUser.uid === active.uid;
+        const adminEmailMatch = active.role === 'admin' && firebaseUser.email === active.email;
+        if (!uidMatches && !adminEmailMatch) {
+          DBService.logout();
+          setCurrentUser(null);
+          setCurrentScreen('login');
+        }
+      });
     });
 
-    return () => unsub();
+    return () => unsub?.();
   }, []);
 
   const handleLoginSuccess = (user: DealerProfile) => {
