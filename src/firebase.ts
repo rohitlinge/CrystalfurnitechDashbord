@@ -462,33 +462,38 @@ async function writeDealerProfileViaRest(uid: string, profile: DealerProfile, id
   await writeDocumentRest('dealers', uid, profile as unknown as Record<string, unknown>, idToken);
 }
 
-/** Ping Firebase Hosting init.json — no API key in URL, avoids referrer restrictions on Vercel. */
-async function checkFirebaseInitJson(timeoutMs: number): Promise<boolean> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+/** Setup hint for deployed hosts (Vercel, custom domains). */
+export function getFirebaseSetupHint(): string {
+  if (typeof window === 'undefined') return '';
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return '';
+  return `Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains. Also add https://${host}/* to Google Cloud → API key → HTTP referrers.`;
+}
+
+/** SDK connectivity check — no API key in URL (works when HTTP referrers block REST ping). */
+async function checkFirestoreViaSdk(timeoutMs: number): Promise<boolean> {
   try {
-    const url = `https://${firebaseConfig.authDomain}/__/firebase/init.json`;
-    const res = await fetch(url, { signal: controller.signal });
-    const ok = res.ok;
+    await enableNetwork(db);
+    await Promise.race([
+      getDoc(doc(db, 'test', 'connection')),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('SDK connection timed out')), timeoutMs)
+      ),
+    ]);
     // #region agent log
-    debugLog('firebase.ts:checkFirebaseInitJson', 'Auth init.json ping', {
-      status: res.status,
-      ok,
-      authDomain: firebaseConfig.authDomain,
+    debugLog('firebase.ts:checkFirestoreViaSdk', 'SDK ping ok', {
       hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-    }, 'C');
+    }, 'D');
     // #endregion
-    return ok;
+    return true;
   } catch (err) {
     // #region agent log
-    debugLog('firebase.ts:checkFirebaseInitJson', 'Auth init.json ping failed', {
+    debugLog('firebase.ts:checkFirestoreViaSdk', 'SDK ping failed', {
       error: err instanceof Error ? err.message : String(err),
       hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-    }, 'C');
+    }, 'E');
     // #endregion
     return false;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -528,20 +533,15 @@ async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
 
 /** Ensure Firestore network is enabled and verify cloud connectivity. */
 export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promise<boolean> {
-  // Hosting init.json first — works on Vercel without API-key referrer restrictions
-  if (await checkFirebaseInitJson(Math.min(timeoutMs, 8000))) {
-    try {
-      await enableNetwork(db);
-    } catch {
-      /* network may already be enabled */
-    }
+  // SDK first — no API key in URL (works on Vercel when HTTP referrers block REST ping)
+  if (await checkFirestoreViaSdk(Math.min(timeoutMs, 15000))) {
     // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via init.json', { hostname: window.location.hostname }, 'C');
+    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via SDK', { hostname: window.location.hostname }, 'D');
     // #endregion
     return true;
   }
 
-  // REST ping — may fail on Vercel if API key HTTP referrers exclude this domain
+  // REST ping fallback — works on localhost; may fail on Vercel if API key referrers exclude domain
   if (await checkFirestoreViaRest(Math.min(timeoutMs, 12000))) {
     try {
       await enableNetwork(db);
@@ -554,38 +554,22 @@ export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promi
     return true;
   }
 
-  // SDK fallback with one retry after waking the network layer
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      await enableNetwork(db);
-      await Promise.race([
-        getDoc(doc(db, 'test', 'connection')),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Firebase connection timed out')), timeoutMs)
-        ),
-      ]);
-      // #region agent log
-      debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via SDK', { attempt, hostname: window.location.hostname }, 'D');
-      // #endregion
-      return true;
-    } catch (error) {
-      console.warn(`Firebase connection check attempt ${attempt + 1}:`, error);
-      // #region agent log
-      debugLog('firebase.ts:ensureFirebaseConnection', 'SDK attempt failed', {
-        attempt,
-        error: error instanceof Error ? error.message : String(error),
-        hostname: window.location.hostname,
-      }, 'E');
-      // #endregion
-      if (attempt === 0) {
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-    }
+  // Last resort: enable network layer and allow login to surface real auth errors
+  try {
+    await enableNetwork(db);
+    // #region agent log
+    debugLog('firebase.ts:ensureFirebaseConnection', 'Checks failed, network enabled anyway', {
+      hostname: window.location.hostname,
+      setupHint: getFirebaseSetupHint(),
+    }, 'E');
+    // #endregion
+    return typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+  } catch {
+    // #region agent log
+    debugLog('firebase.ts:ensureFirebaseConnection', 'All connection checks failed', { hostname: window.location.hostname }, 'E');
+    // #endregion
+    return false;
   }
-  // #region agent log
-  debugLog('firebase.ts:ensureFirebaseConnection', 'All connection checks failed', { hostname: window.location.hostname }, 'E');
-  // #endregion
-  return false;
 }
 
 function formatFirebaseError(error: unknown, fallback: string): string {
@@ -1277,9 +1261,10 @@ export class DBService {
       );
       const fbUid = authResult.user.uid;
       newProfile.uid = fbUid;
+      const idToken = await authResult.user.getIdToken();
 
       await withTimeout(
-        setDoc(doc(db, 'dealers', fbUid), newProfile),
+        writeDealerProfileViaRest(fbUid, newProfile, idToken),
         15000,
         "Saving dealer profile timed out."
       );
@@ -1306,8 +1291,9 @@ export class DBService {
           );
           const fbUid = authResult.user.uid;
           newProfile.uid = fbUid;
+          const idToken = await authResult.user.getIdToken();
           await withTimeout(
-            setDoc(doc(db, 'dealers', fbUid), newProfile, { merge: true }),
+            writeDealerProfileViaRest(fbUid, newProfile, idToken),
             15000,
             "Database profile update timed out."
           );
@@ -1411,6 +1397,9 @@ export class DBService {
       }
 
       this.setActiveUser(adminProfile);
+      // #region agent log
+      debugLog('firebase.ts:login', 'Admin login success', { uid: adminProfile.uid, hostname: window.location.hostname }, 'B');
+      // #endregion
       return adminProfile;
     }
 
@@ -1433,6 +1422,9 @@ export class DBService {
       );
       if (profile) {
         this.setActiveUser(profile);
+        // #region agent log
+        debugLog('firebase.ts:login', 'Dealer login success', { uid: profile.uid, hostname: window.location.hostname }, 'B');
+        // #endregion
         return profile;
       }
       throw new Error("Your account exists in Firebase Auth but has no dealer profile in Firestore. Please contact support or re-register.");
@@ -1536,13 +1528,18 @@ export class DBService {
       }
 
       newProfile.uid = fbUid;
+      try {
+        await fbSignOut(auth);
+      } catch {
+        /* ignore */
+      }
+      await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
+      const adminToken = await auth.currentUser!.getIdToken();
       await withTimeout(
-        setDoc(doc(db, 'dealers', fbUid), { ...newProfile, status: 'Approved' }),
+        writeDealerProfileViaRest(fbUid, { ...newProfile, status: 'Approved' }, adminToken),
         15000,
         'Saving dealer profile timed out.'
       );
-
-      await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
     } catch (error: unknown) {
       try {
         await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');

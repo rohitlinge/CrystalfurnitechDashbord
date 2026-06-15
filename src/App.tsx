@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { DBService, ensureFirebaseConnection, auth, waitForAuthReady } from './firebase';
+import { DBService, ensureFirebaseConnection, auth, waitForAuthReady, getFirebaseSetupHint } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { DealerProfile } from './types';
 import Login from './components/Login';
@@ -22,7 +22,11 @@ export default function App() {
     if (connected) {
       setNetworkError(null);
     } else {
-      setNetworkError("Could not reach Firebase Cloud Firestore. Click Retry or check your internet connection.");
+      const hint = getFirebaseSetupHint();
+      setNetworkError(
+        hint ||
+          "Could not reach Firebase Cloud Firestore. Click Retry or check your internet connection."
+      );
     }
     return connected;
   }, []);
