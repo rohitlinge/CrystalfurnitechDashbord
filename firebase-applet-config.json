@@ -3,7 +3,7 @@
   "appId": "1:279603293712:web:bb9b0e5ab07bdbb81f2495",
   "apiKey": "AIzaSyB9d3SLvVuZpHKld9HshN-9oRZpkz0RrBc",
   "authDomain": "crystalfurnitech-4a073.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-82bd942c-4b18-41cb-a0b6-56c1589d6428",
+  "firestoreDatabaseId": "default",
   "storageBucket": "crystalfurnitech-4a073.firebasestorage.app",
   "messagingSenderId": "279603293712",
   "measurementId": ""

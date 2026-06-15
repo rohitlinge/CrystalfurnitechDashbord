@@ -30,6 +30,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
   });
 
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [registeredSuccessfully, setRegisteredSuccessfully] = useState(false);
 
@@ -74,6 +75,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
     }
 
     setLoading(true);
+    setLoadingStep('Creating your account...');
 
     try {
       await DBService.register({
@@ -94,6 +96,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
       setError(err.message || 'An error occurred during account registration. Please try again.');
     } finally {
       setLoading(false);
+      setLoadingStep('');
     }
   };
 
@@ -368,7 +371,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
           {loading ? (
             <>
               <div className="w-4 h-4 border-2 border-[#09090b] border-t-transparent rounded-full animate-spin"></div>
-              Registering Dealer Account...
+              {loadingStep || 'Registering Dealer Account...'}
             </>
           ) : "Submit wholesale registration profile"}
         </button>

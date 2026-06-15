@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { DBService, db } from './firebase';
+import React, { useState, useEffect, useCallback } from 'react';
+import { DBService, ensureFirebaseConnection } from './firebase';
 import { DealerProfile } from './types';
 import Login from './components/Login';
 import Register from './components/Register';
 import AdminDashboard from './components/AdminDashboard';
 import DealerDashboard from './components/DealerDashboard';
-import { doc, getDocFromServer } from 'firebase/firestore';
 import { ShieldCheck, Server, Sparkles, Building } from 'lucide-react';
 
 export default function App() {
@@ -13,39 +12,23 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'login' | 'register' | 'admin' | 'dealer'>('login');
   const [networkChecked, setNetworkChecked] = useState(false);
   const [networkError, setNetworkError] = useState<string | null>(null);
+  const [firebaseConnected, setFirebaseConnected] = useState(false);
 
-  // Connection testing of Firestore client as commanded by firebase-integration skill guidelines
-  useEffect(() => {
-    async function testConnection() {
-      try {
-        // Skip calling firestore server if in local mock mode
-        if (DBService.isMockMode()) {
-          setNetworkChecked(true);
-          return;
-        }
-        // Test connection with a safe fast-timeout race
-        await Promise.race([
-          getDocFromServer(doc(db, 'test', 'connection')),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
-        ]);
-        console.log("Firestore connection check successful.");
-      } catch (error: any) {
-        const errorMsg = error?.message || '';
-        // Align with firebase-integration skill: Log friendly warning if client is offline, log info otherwise
-        if (errorMsg.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
-        } else {
-          console.log("Firestore connection check info status:", errorMsg);
-        }
-        if (errorMsg.includes('the client is offline') || errorMsg === 'timeout' || errorMsg.includes('failed-precondition') || errorMsg.includes('unavailable')) {
-          setNetworkError("Live sync with Google Cloud is pending. Please verify your connection.");
-        }
-      } finally {
-        setNetworkChecked(true);
-      }
+  const recheckFirebaseConnection = useCallback(async () => {
+    const connected = await ensureFirebaseConnection(20000);
+    setFirebaseConnected(connected);
+    setNetworkChecked(true);
+    if (connected) {
+      setNetworkError(null);
+    } else {
+      setNetworkError("Could not reach Firebase Cloud Firestore. Click Retry or check your internet connection.");
     }
-    testConnection();
+    return connected;
   }, []);
+
+  useEffect(() => {
+    recheckFirebaseConnection();
+  }, [recheckFirebaseConnection]);
 
   // Initialize auth state from local persisted cached session on initial load
   useEffect(() => {
@@ -86,8 +69,16 @@ export default function App() {
         <div className="bg-amber-600/90 text-white text-center py-2.5 px-4 font-semibold text-xs flex items-center justify-between gap-2 relative z-50 animate-fade-in">
           <div className="flex items-center gap-2 mx-auto">
             <Server className="w-4 h-4 text-white shrink-0 animate-pulse" />
-            <span>{networkError} - Local sandbox overrides active.</span>
+            <span>{networkError}</span>
           </div>
+          <button
+            type="button"
+            onClick={() => recheckFirebaseConnection()}
+            className="p-1 px-2.5 bg-white/20 hover:bg-white/35 text-white text-[10px] uppercase font-bold rounded-md transition duration-200 cursor-pointer shrink-0"
+            title="Retry Firebase connection"
+          >
+            Retry
+          </button>
           <button
             type="button"
             onClick={() => setNetworkError(null)}
@@ -110,6 +101,9 @@ export default function App() {
           <Login 
             onLoginSuccess={handleLoginSuccess}
             onGoToRegister={() => setCurrentScreen('register')}
+            firebaseConnected={firebaseConnected}
+            networkChecked={networkChecked}
+            onRecheckConnection={recheckFirebaseConnection}
           />
         </div>
       )}

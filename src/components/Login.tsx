@@ -6,9 +6,12 @@ import { Mail, Lock, LogIn, Sparkles, Building, CheckCircle, Shield, AlertTriang
 interface LoginProps {
   onLoginSuccess: (user: DealerProfile) => void;
   onGoToRegister: () => void;
+  firebaseConnected?: boolean;
+  networkChecked?: boolean;
+  onRecheckConnection?: () => Promise<boolean>;
 }
 
-export default function Login({ onLoginSuccess, onGoToRegister }: LoginProps) {
+export default function Login({ onLoginSuccess, onGoToRegister, firebaseConnected = false, networkChecked = false, onRecheckConnection }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -19,7 +22,7 @@ export default function Login({ onLoginSuccess, onGoToRegister }: LoginProps) {
     details?: string;
   } | null>(null);
 
-  const [useMock, setUseMock] = useState(DBService.isMockMode());
+
   const [seedingText, setSeedingText] = useState<string | null>(null);
   const [seedingSuccess, setSeedingSuccess] = useState<boolean>(false);
 
@@ -30,18 +33,13 @@ export default function Login({ onLoginSuccess, onGoToRegister }: LoginProps) {
     try {
       await DBService.initializeAndSeedLiveDb();
       setSeedingSuccess(true);
-      setSeedingText("Success! Database has been initialized. Check your Firebase console Firestore tab to see 'categories', 'products', and 'dealers' collections!");
+      setSeedingText("Success! Database initialized. You can now log in as admin@crystalfurnitech.com / admin123");
+      await onRecheckConnection?.();
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to seed live database.");
       setSeedingText(null);
     }
-  };
-
-  const handleToggleMode = () => {
-    const nextMock = !useMock;
-    DBService.setMockMode(nextMock);
-    setUseMock(nextMock);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -184,29 +182,23 @@ export default function Login({ onLoginSuccess, onGoToRegister }: LoginProps) {
         </button>
       </div>
 
-      {/* Real-time DB vs Mock DB Toggle Ribbon for audit clarity */}
+      {/* Live Firebase connection status */}
       <div className="bg-[#18181b] border border-[#27272a] rounded-xl p-4 text-xs text-[#a1a1aa] shadow-lg">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5 font-medium text-[#fafafa]">
             <Sparkles className="w-4 h-4 text-[#f59e0b]" />
             <span>Connection: </span>
-            <span className={useMock ? "text-[#f59e0b] font-bold" : "text-[#10b981] font-bold"}>
-              {useMock ? "Offline Sandbox" : "Real Live Firebase"}
-            </span>
+            {!networkChecked ? (
+              <span className="text-zinc-400 font-bold animate-pulse">Checking Firebase...</span>
+            ) : (
+              <span className={firebaseConnected ? "text-[#10b981] font-bold" : "text-[#ef4444] font-bold"}>
+                {firebaseConnected ? "Live Firebase Connected" : "Firebase Unreachable"}
+              </span>
+            )}
           </div>
-          <button
-            id="btn-toggle-db-mode"
-            type="button"
-            onClick={handleToggleMode}
-            className="text-[10px] bg-transparent hover:bg-[#fafafa] hover:text-[#09090b] text-[#fafafa] py-1 px-2.5 rounded border border-[#27272a] transition duration-200"
-          >
-            Switch to {useMock ? "Live" : "Local Sandbox"}
-          </button>
         </div>
         <p className="text-[11px] text-[#a1a1aa] mt-2 leading-relaxed">
-          {useMock 
-            ? "Offline Sandbox uses localized mock database to evaluate Pending, Approved, and Suspended dealer flows instantly." 
-            : "Connects with the crystal-furnitech Firestore project directly using Firebase config."}
+          All accounts and data sync with Firestore database <code className="text-emerald-400">default</code> in project <code className="text-emerald-400">crystalfurnitech-4a073</code> (asia-south1).
         </p>
       </div>
 

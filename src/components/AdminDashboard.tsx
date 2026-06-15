@@ -99,16 +99,15 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const fetchData = async () => {
     setLoading(true);
     try {
-      const allDealers = await DBService.getDealers();
+      const [allDealers, allReqs, allCats, allProds] = await Promise.all([
+        DBService.getDealers(),
+        DBService.getStockRequirements(),
+        DBService.getCategories(),
+        DBService.getProducts(),
+      ]);
       setDealers(allDealers);
-      
-      const allReqs = await DBService.getStockRequirements();
       setRequirements(allReqs);
-
-      const allCats = await DBService.getCategories();
       setCategories(allCats);
-
-      const allProds = await DBService.getProducts();
       setProducts(allProds);
 
       // Recalculate stats

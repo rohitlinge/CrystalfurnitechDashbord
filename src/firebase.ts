@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { 
   initializeFirestore, 
+  enableNetwork,
   collection, 
   doc, 
   getDoc, 
@@ -45,7 +46,250 @@ const databaseId = env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseAppletConf
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = initializeFirestore(app, { experimentalForceLongPolling: true }, databaseId);
+export const db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true }, databaseId);
+
+/** Wake Firestore network layer and wait until Auth token is ready for writes. */
+async function prepareFirestoreWrite(): Promise<void> {
+  await enableNetwork(db);
+  if (!auth.currentUser) {
+    await new Promise<void>((resolve) => {
+      const unsub = onAuthStateChanged(auth, () => {
+        unsub();
+        resolve();
+      });
+      setTimeout(() => {
+        unsub();
+        resolve();
+      }, 5000);
+    });
+  }
+}
+
+// Keep Firestore online from app start
+prepareFirestoreWrite().catch(() => {});
+
+/** Convert a plain object to Firestore REST API field format. */
+function toFirestoreRestFields(data: Record<string, unknown>): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'boolean') {
+      fields[key] = { booleanValue: value };
+    } else if (typeof value === 'number') {
+      fields[key] = Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+    } else if (Array.isArray(value)) {
+      fields[key] = { arrayValue: { values: value.map((v) => ({ stringValue: String(v) })) } };
+    } else {
+      fields[key] = { stringValue: String(value) };
+    }
+  }
+  return fields;
+}
+
+/** Parse Firestore REST fields back to a plain object. */
+function fromFirestoreRestFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(fields)) {
+    const val = raw as Record<string, unknown>;
+    if ('stringValue' in val) result[key] = val.stringValue;
+    else if ('booleanValue' in val) result[key] = val.booleanValue;
+    else if ('integerValue' in val) result[key] = parseInt(String(val.integerValue), 10);
+    else if ('doubleValue' in val) result[key] = val.doubleValue;
+    else if ('arrayValue' in val && val.arrayValue && typeof val.arrayValue === 'object') {
+      const arr = val.arrayValue as { values?: Array<Record<string, unknown>> };
+      result[key] = (arr.values || []).map((v) => v.stringValue ?? v);
+    }
+  }
+  return result;
+}
+
+async function getRestIdToken(requireAdmin = false): Promise<string> {
+  if (requireAdmin) {
+    if (auth.currentUser?.email !== 'admin@crystalfurnitech.com') {
+      await withTimeout(
+        signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+        12000,
+        'Admin session required. Please log in again.'
+      );
+    }
+  } else if (!auth.currentUser) {
+    throw new Error('Not authenticated with Firebase. Please log in again.');
+  }
+  if (!auth.currentUser) {
+    throw new Error('Not authenticated with Firebase. Please log in again.');
+  }
+  return auth.currentUser.getIdToken();
+}
+
+async function getDocumentRest<T>(collection: string, docId: string, idToken: string): Promise<T | null> {
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(databaseId)}/documents/${collection}/${encodeURIComponent(docId)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${idToken}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to get ${collection}/${docId} (${res.status}): ${await res.text()}`);
+  }
+  const data = (await res.json()) as { fields: Record<string, unknown> };
+  return fromFirestoreRestFields(data.fields) as T;
+}
+
+async function listCollectionRest<T>(collectionName: string, requireAdmin = false): Promise<T[]> {
+  const token = await getRestIdToken(requireAdmin);
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(databaseId)}/documents/${collectionName}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    throw new Error(`Failed to list ${collectionName} (${res.status}): ${await res.text()}`);
+  }
+  const data = (await res.json()) as { documents?: Array<{ name: string; fields: Record<string, unknown> }> };
+  if (!data.documents?.length) return [];
+  return data.documents.map((doc) => fromFirestoreRestFields(doc.fields) as T);
+}
+
+async function writeDocumentRest(
+  collection: string,
+  docId: string,
+  payload: Record<string, unknown>,
+  idToken: string
+): Promise<void> {
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(databaseId)}/documents/${collection}` +
+    `?documentId=${encodeURIComponent(docId)}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: toFirestoreRestFields(payload) }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    if (res.status === 409 || detail.includes('ALREADY_EXISTS')) {
+      await patchDocumentRest(collection, docId, payload, idToken);
+      return;
+    }
+    throw new Error(`Firestore write failed (${res.status}): ${detail}`);
+  }
+}
+
+async function patchDocumentRest(
+  collection: string,
+  docId: string,
+  payload: Record<string, unknown>,
+  idToken: string
+): Promise<void> {
+  const mask = Object.keys(payload).map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(databaseId)}/documents/${collection}/${encodeURIComponent(docId)}?${mask}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fields: toFirestoreRestFields(payload) }),
+  });
+  if (!res.ok) {
+    throw new Error(`Firestore patch failed (${res.status}): ${await res.text()}`);
+  }
+}
+
+async function deleteDocumentRest(collection: string, docId: string, idToken: string): Promise<void> {
+  const url =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(databaseId)}/documents/${collection}/${encodeURIComponent(docId)}`;
+  const res = await fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${idToken}` } });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`Firestore delete failed (${res.status}): ${await res.text()}`);
+  }
+}
+
+/** Write dealer profile via Firestore REST API — bypasses browser SDK offline hangs. */
+async function writeDealerProfileViaRest(uid: string, profile: DealerProfile, idToken: string): Promise<void> {
+  await writeDocumentRest('dealers', uid, profile as unknown as Record<string, unknown>, idToken);
+}
+
+/** Ping Firestore REST API — reliable in browsers (avoids SDK offline false-negatives). */
+async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url =
+      `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+      `/databases/${encodeURIComponent(databaseId)}/documents/test/connection` +
+      `?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+    const res = await fetch(url, { signal: controller.signal });
+    return res.ok || res.status === 404 || res.status === 403;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Ensure Firestore network is enabled and verify cloud connectivity. */
+export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promise<boolean> {
+  // REST ping first — fast and avoids SDK "client is offline" false alarms
+  if (await checkFirestoreViaRest(Math.min(timeoutMs, 12000))) {
+    try {
+      await enableNetwork(db);
+    } catch {
+      /* network may already be enabled */
+    }
+    return true;
+  }
+
+  // SDK fallback with one retry after waking the network layer
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await enableNetwork(db);
+      await Promise.race([
+        getDoc(doc(db, 'test', 'connection')),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Firebase connection timed out')), timeoutMs)
+        ),
+      ]);
+      return true;
+    } catch (error) {
+      console.warn(`Firebase connection check attempt ${attempt + 1}:`, error);
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    }
+  }
+  return false;
+}
+
+function formatFirebaseError(error: unknown, fallback: string): string {
+  const err = error as { code?: string; message?: string };
+  const code = err?.code || '';
+  const message = err?.message || fallback;
+
+  if (code === 'permission-denied' || message.includes('PERMISSION_DENIED')) {
+    return 'Firestore denied this action. Run "npm run deploy:rules" to deploy security rules, then try again.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return 'This email is already registered. Please sign in or use a different email.';
+  }
+  if (code === 'auth/weak-password') {
+    return 'Password is too weak. Please use at least 6 characters.';
+  }
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
+    return 'Incorrect email or password. Please check your credentials.';
+  }
+  if (code === 'auth/user-not-found') {
+    return 'No account found with this email. Please register first.';
+  }
+  if (code === 'not-found' || message.includes('NOT_FOUND')) {
+    return 'Firestore database not found. Verify firestoreDatabaseId in firebase-applet-config.json matches your Firebase project.';
+  }
+  if (message.includes('timed out') || message.includes('offline')) {
+    if (message.includes('profile')) {
+      return 'Could not load your dealer profile. Please try again or contact support.';
+    }
+    return 'Could not reach Firebase. Check your internet connection and try again.';
+  }
+  return message;
+}
 
 // Initial Categories specification
 export const INITIAL_CATEGORIES: CategoryItem[] = [
@@ -415,13 +659,15 @@ export class DBService {
       );
       if (prodsSnapshot.empty) {
         console.log("Seeding initial products into live Firestore...");
-        for (const prod of INITIAL_PRODUCTS) {
-          await withTimeout(
-            setDoc(doc(db, 'products', prod.id), prod),
-            10000,
-            `Seeding product ${prod.name} timed out.`
-          );
-        }
+        await Promise.all(
+          INITIAL_PRODUCTS.map((prod) =>
+            withTimeout(
+              setDoc(doc(db, 'products', prod.id), prod),
+              15000,
+              `Seeding product ${prod.name} timed out.`
+            )
+          )
+        );
       }
     } catch (e) {
       console.warn("Could not seed initial collections, potentially due to rules or offline state:", e);
@@ -442,7 +688,7 @@ export class DBService {
 
     try {
       console.log("Starting Firebase Auth & Firestore seeding process...");
-      
+      await enableNetwork(db);
       // Step 1: Create or Sign In as Admin
       let fbUid = '';
       try {
@@ -502,7 +748,7 @@ export class DBService {
       }
     } catch (e: any) {
       console.error("Initialization / Seeding failed:", e);
-      throw new Error(e.message || "Could not complete database initialization. Check firestore rules or connection.");
+      throw new Error(formatFirebaseError(e, "Could not complete database initialization. Check firestore rules or connection."));
     }
   }
 
@@ -524,22 +770,18 @@ export class DBService {
     const isMock = this.isMockMode();
     if (!isMock) {
       try {
-        const q = query(collection(db, 'categories'), orderBy('name', 'asc'));
-        const querySnapshot = await withTimeout(
-          getDocs(q),
-          5000,
-          "Categories request timed out."
+        const fetchedCats = await withTimeout(
+          listCollectionRest<CategoryItem>('categories'),
+          15000,
+          'Categories request timed out.'
         );
-        const fetchedCats: CategoryItem[] = [];
-        querySnapshot.forEach((doc) => {
-          fetchedCats.push(doc.data() as CategoryItem);
-        });
+        fetchedCats.sort((a, b) => a.name.localeCompare(b.name));
         if (fetchedCats.length > 0) {
           setStorageItem('categories', fetchedCats);
           return fetchedCats;
         }
       } catch (error) {
-        console.warn("Could not query live Firestore categories, pulling from local vault:", error);
+        console.warn('REST categories fetch failed:', error);
       }
     }
     return getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
@@ -553,17 +795,18 @@ export class DBService {
       createdDate: new Date().toISOString()
     };
 
+    if (!isMock) {
+      const token = await getRestIdToken(true);
+      await withTimeout(
+        writeDocumentRest('categories', newCat.id, newCat as unknown as Record<string, unknown>, token),
+        15000,
+        'Failed to save category to Firebase.'
+      );
+    }
+
     const cats = getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
     cats.push(newCat);
     setStorageItem('categories', cats);
-
-    if (!isMock) {
-      try {
-        await setDoc(doc(db, 'categories', newCat.id), newCat);
-      } catch (error) {
-        console.error("Failed to sync category to Live Firestore:", error);
-      }
-    }
     return newCat;
   }
 
@@ -574,26 +817,23 @@ export class DBService {
     setStorageItem('categories', updated);
 
     if (!isMock) {
-      try {
-        await setDoc(doc(db, 'categories', id), fields, { merge: true });
-      } catch (error) {
-        console.error("Failed to update Firestore category:", error);
-      }
+      const token = await getRestIdToken(true);
+      await withTimeout(
+        patchDocumentRest('categories', id, fields as Record<string, unknown>, token),
+        15000,
+        'Failed to update category in Firebase.'
+      );
     }
   }
 
   static async deleteCategory(id: string): Promise<void> {
     const isMock = this.isMockMode();
     const cats = getStorageItem<CategoryItem[]>('categories', INITIAL_CATEGORIES);
-    const filtered = cats.filter(c => c.id !== id);
-    setStorageItem('categories', filtered);
+    setStorageItem('categories', cats.filter(c => c.id !== id));
 
     if (!isMock) {
-      try {
-        await deleteDoc(doc(db, 'categories', id));
-      } catch (error) {
-        console.error("Failed to delete Firestore category:", error);
-      }
+      const token = await getRestIdToken(true);
+      await deleteDocumentRest('categories', id, token);
     }
   }
 
@@ -602,22 +842,18 @@ export class DBService {
     const isMock = this.isMockMode();
     if (!isMock) {
       try {
-        const q = query(collection(db, 'products'), orderBy('createdDate', 'desc'));
-        const querySnapshot = await withTimeout(
-          getDocs(q),
-          5000,
-          "Products request timed out."
+        const fetchedProds = await withTimeout(
+          listCollectionRest<ProductItem>('products'),
+          15000,
+          'Products request timed out.'
         );
-        const fetchedProds: ProductItem[] = [];
-        querySnapshot.forEach((doc) => {
-          fetchedProds.push(doc.data() as ProductItem);
-        });
+        fetchedProds.sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime());
         if (fetchedProds.length > 0) {
           setStorageItem('products', fetchedProds);
           return fetchedProds;
         }
       } catch (error) {
-        console.warn("Could not query live Firestore products, pulling from local vault:", error);
+        console.warn('REST products fetch failed:', error);
       }
     }
     return getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
@@ -631,17 +867,18 @@ export class DBService {
       createdDate: new Date().toISOString()
     };
 
+    if (!isMock) {
+      const token = await getRestIdToken(true);
+      await withTimeout(
+        writeDocumentRest('products', newProd.id, newProd as unknown as Record<string, unknown>, token),
+        15000,
+        'Failed to save product to Firebase.'
+      );
+    }
+
     const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
     prods.unshift(newProd);
     setStorageItem('products', prods);
-
-    if (!isMock) {
-      try {
-        await setDoc(doc(db, 'products', newProd.id), newProd);
-      } catch (error) {
-        console.error("Failed to sync product to Live Firestore:", error);
-      }
-    }
     return newProd;
   }
 
@@ -652,35 +889,23 @@ export class DBService {
     setStorageItem('products', updated);
 
     if (!isMock) {
-      try {
-        await runTransaction(db, async (transaction) => {
-          const productRef = doc(db, 'products', id);
-          const productDoc = await transaction.get(productRef);
-          if (productDoc.exists()) {
-            transaction.update(productRef, fields);
-          } else {
-            transaction.set(productRef, fields, { merge: true });
-          }
-        });
-      } catch (error) {
-        console.error("Failed to update Firestore product via transaction:", error);
-        throw error;
-      }
+      const token = await getRestIdToken(true);
+      await withTimeout(
+        patchDocumentRest('products', id, fields as Record<string, unknown>, token),
+        15000,
+        'Failed to update product in Firebase.'
+      );
     }
   }
 
   static async deleteProduct(id: string): Promise<void> {
     const isMock = this.isMockMode();
     const prods = getStorageItem<ProductItem[]>('products', INITIAL_PRODUCTS);
-    const filtered = prods.filter(p => p.id !== id);
-    setStorageItem('products', filtered);
+    setStorageItem('products', prods.filter(p => p.id !== id));
 
     if (!isMock) {
-      try {
-        await deleteDoc(doc(db, 'products', id));
-      } catch (error) {
-        console.error("Failed to delete Firestore product:", error);
-      }
+      const token = await getRestIdToken(true);
+      await deleteDocumentRest('products', id, token);
     }
   }
 
@@ -693,12 +918,13 @@ export class DBService {
       if (fileOrBase64.startsWith('data:')) {
         if (!isMock) {
           try {
+            await getRestIdToken(true);
             const storage = getStorage();
             const storageRef = ref(storage, `products/${fileName}`);
-            await uploadString(storageRef, fileOrBase64, 'data_url');
+            await withTimeout(uploadString(storageRef, fileOrBase64, 'data_url'), 30000, 'Image upload timed out.');
             return await getDownloadURL(storageRef);
           } catch (e) {
-            console.error("Firebase Storage upload failed, relying on Local DataURI:", e);
+            console.error("Firebase Storage upload failed, using embedded image:", e);
           }
         }
         return fileOrBase64;
@@ -708,9 +934,10 @@ export class DBService {
 
     if (!isMock) {
       try {
+        await getRestIdToken(true);
         const storage = getStorage();
         const storageRef = ref(storage, `products/${fileName}`);
-        await uploadBytes(storageRef, fileOrBase64);
+        await withTimeout(uploadBytes(storageRef, fileOrBase64), 30000, 'Image upload timed out.');
         return await getDownloadURL(storageRef);
       } catch (e) {
         console.error("Firebase Storage file upload failed, falling back to local base64:", e);
@@ -719,26 +946,24 @@ export class DBService {
 
     return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        resolve(reader.result as string);
-      };
+      reader.onloadend = () => resolve(reader.result as string);
       reader.readAsDataURL(fileOrBase64);
     });
   }
 
-  // --- Upload Files/Sheets/Brochures Helper ---
   static async uploadProductFile(file: File, sku: string, folderName: 'sheets' | 'brochures' | 'products'): Promise<string> {
     const isMock = this.isMockMode();
     const fileName = `${sku}_${folderName}_${Date.now()}_${file.name}`;
     
     if (!isMock) {
       try {
+        await getRestIdToken(true);
         const storage = getStorage();
         const storageRef = ref(storage, `${folderName}/${fileName}`);
-        await uploadBytes(storageRef, file);
+        await withTimeout(uploadBytes(storageRef, file), 30000, 'File upload timed out.');
         return await getDownloadURL(storageRef);
       } catch (e) {
-        console.error("Firebase Storage secure file upload failed, fallback to local object URL:", e);
+        console.error("Firebase Storage file upload failed, fallback to local object URL:", e);
       }
     }
     
@@ -767,23 +992,32 @@ export class DBService {
 
     if (!isMock) {
       try {
-        // Attempt authenticating with real firebase with timeout limits
+        try {
+          await fbSignOut(auth);
+        } catch {
+          /* no active session */
+        }
+
         const authResult = await withTimeout(
           createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
-          20000,
-          "Authentication registration timed out. Please check your network connection and verify if the Firebase Auth service is responsive."
+          15000,
+          "Authentication registration timed out."
         );
         const fbUid = authResult.user.uid;
         newProfile.uid = fbUid;
-        
-        // Write info to Firestore with timeout limit
-        await withErrorAndTimeout(
-          setDoc(doc(db, 'dealers', fbUid), newProfile),
-          OperationType.CREATE,
-          `dealers/${fbUid}`,
-          20000,
-          "Database registration write timed out. This usually happens if the live Firestore connection is blocked, or the Security Rules are rejecting the write."
+
+        const idToken = await authResult.user.getIdToken();
+        await withTimeout(
+          writeDealerProfileViaRest(fbUid, newProfile, idToken),
+          15000,
+          "Saving dealer profile timed out."
         );
+
+        try {
+          await fbSignOut(auth);
+        } catch {
+          /* ignore */
+        }
       } catch (error: any) {
         console.error("Firebase Live Sign Up failed:", error);
         
@@ -798,27 +1032,29 @@ export class DBService {
             // Attempt to sign in with timeout limits
             const authResult = await withTimeout(
               signInWithEmailAndPassword(auth, cleanEmail, fields.password),
-              20000,
-              "Authentication sign-in timed out during self-healing check."
+              15000,
+              "Authentication sign-in timed out."
             );
             const fbUid = authResult.user.uid;
             newProfile.uid = fbUid;
-            
-            // Re-write or self-correct registration info to Firestore with timeout limits
-            await withErrorAndTimeout(
-              setDoc(doc(db, 'dealers', fbUid), newProfile),
-              OperationType.UPDATE,
-              `dealers/${fbUid}`,
-              20000,
-              "Database self-healing update timed out. Please check your database rules."
+            const idToken = await authResult.user.getIdToken();
+            await withTimeout(
+              writeDealerProfileViaRest(fbUid, newProfile, idToken),
+              15000,
+              "Database profile update timed out."
             );
+            try {
+              await fbSignOut(auth);
+            } catch {
+              /* ignore */
+            }
             console.log("Dealer document restored/updated successfully for user:", cleanEmail);
           } catch (signInErr: any) {
             console.error("Failed to recover existing auth user via sign in:", signInErr);
             throw new Error("This email is already registered with a different password. Please check your credentials or complete registration with the correct password.");
           }
         } else {
-          throw new Error(error?.message || "Firebase registration failed. Please ensure your Firestore Security Rules permit document writes and your connection is established.");
+          throw new Error(formatFirebaseError(error, "Firebase registration failed. Please ensure Firestore security rules are deployed and your connection is active."));
         }
       }
     }
@@ -862,39 +1098,53 @@ export class DBService {
       const isMock = this.isMockMode();
       if (!isMock) {
         try {
-          // Force sign-in or automatically register admin account on real Firebase Auth
-          let fbUid = '';
+          const authResult = await withTimeout(
+            signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+            12000,
+            "Admin sign-in timed out. Please check your connection."
+          );
+          const fbUid = authResult.user.uid;
+          adminProfile.uid = fbUid;
+
           try {
-            const authResult = await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
-            fbUid = authResult.user.uid;
-          } catch (signInErr: any) {
-            if (
-              signInErr.code === 'auth/user-not-found' || 
-              signInErr.code === 'auth/invalid-credential' || 
-              signInErr.code === 'auth/invalid-email' || 
-              signInErr.code === 'auth/user-disabled'
-            ) {
-              try {
-                const authResult = await createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
-                fbUid = authResult.user.uid;
-              } catch (createErr) {
-                console.warn("Could not register admin. Checking fallback:", createErr);
-              }
+            const idToken = await authResult.user.getIdToken();
+            const liveProfile = await withTimeout(
+              getDocumentRest<DealerProfile>('dealers', fbUid, idToken),
+              10000,
+              "Admin profile fetch timed out."
+            );
+            if (liveProfile) {
+              Object.assign(adminProfile, liveProfile);
             }
+          } catch {
+            /* use built-in admin profile */
           }
-          if (fbUid) {
-            adminProfile.uid = fbUid;
+
+          // Sync profile in background — never block login on Firestore writes
+          setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true }).catch((fsErr) =>
+            console.warn("Background admin profile sync:", fsErr)
+          );
+        } catch (signInErr: any) {
+          if (
+            signInErr.code === 'auth/user-not-found' ||
+            signInErr.code === 'auth/invalid-credential' ||
+            signInErr.code === 'auth/invalid-email' ||
+            signInErr.code === 'auth/user-disabled'
+          ) {
             try {
-              // Ensure the Firestore document in dealers exists with role='admin'
-              await setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true });
-            } catch (fsErr) {
-              console.error("Could not write admin profile details to Firestore:", fsErr);
+              const authResult = await withTimeout(
+                createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
+                12000,
+                "Admin registration timed out."
+              );
+              adminProfile.uid = authResult.user.uid;
+              setDoc(doc(db, 'dealers', authResult.user.uid), adminProfile, { merge: true }).catch(console.warn);
+            } catch (createErr) {
+              throw new Error(formatFirebaseError(createErr, "Could not sign in or create admin account."));
             }
+          } else {
+            throw new Error(formatFirebaseError(signInErr, "Admin login failed."));
           }
-          // Seed initial categories & products if Firestore is fresh
-          await this.seedFirestore();
-        } catch (e) {
-          console.error("Admin live auth sync failure:", e);
         }
       }
 
@@ -903,6 +1153,12 @@ export class DBService {
     }
 
     const isMock = this.isMockMode();
+    const isDemoDealerEmail = (
+      cleanEmail === 'dealer.pending@crystalfurnitech.com' ||
+      cleanEmail === 'dealer.approved@crystalfurnitech.com' ||
+      cleanEmail === 'dealer.rejected@crystalfurnitech.com'
+    );
+
     if (!isMock) {
       try {
         const authResult = await withTimeout(
@@ -911,20 +1167,28 @@ export class DBService {
           "Login request timed out. Please check your network connection."
         );
         const fbUid = authResult.user.uid;
-        
-        // Fetch profile
-        const docSnap = await withTimeout(
-          getDoc(doc(db, 'dealers', fbUid)),
-          10000,
+        const idToken = await authResult.user.getIdToken();
+
+        const profile = await withTimeout(
+          getDocumentRest<DealerProfile>('dealers', fbUid, idToken),
+          15000,
           "Retrieving dealer profile timed out."
         );
-        if (docSnap.exists()) {
-          const profile = docSnap.data() as DealerProfile;
+        if (profile) {
           this.setActiveUser(profile);
           return profile;
         }
-      } catch (error) {
-        console.error("Firebase Login failed, authenticating mock dealer/fallback check:", error);
+        throw new Error("Your account exists in Firebase Auth but has no dealer profile in Firestore. Please contact support or re-register.");
+      } catch (error: unknown) {
+        const err = error as { code?: string; message?: string };
+        if (isDemoDealerEmail) {
+          console.warn("Demo dealer login falling back to local preview data:", err?.message);
+        } else if (err?.code?.startsWith('auth/') || err?.message?.includes('dealer profile')) {
+          throw new Error(formatFirebaseError(error, "Login failed. Please verify your credentials."));
+        } else {
+          console.error("Firebase Login failed:", error);
+          throw new Error(formatFirebaseError(error, "Could not sign in with Firebase. Check your connection and Firestore rules."));
+        }
       }
     }
 
@@ -960,29 +1224,23 @@ export class DBService {
     const isMock = this.isMockMode();
     if (!isMock) {
       try {
-        const q = query(collection(db, 'dealers'), orderBy('registrationDate', 'desc'));
-        const querySnapshot = await withTimeout(
-          getDocs(q),
-          5000,
-          "Dealers request timed out."
+        const all = await withTimeout(
+          listCollectionRest<DealerProfile>('dealers', true),
+          15000,
+          'Dealers request timed out.'
         );
-        const fetchedDealers: DealerProfile[] = [];
-        querySnapshot.forEach((doc) => {
-          fetchedDealers.push(doc.data() as DealerProfile);
-        });
-        if (fetchedDealers.length > 0) {
-          // Synchronize locally to keep mock state aligned with Firebase real db
-          setStorageItem('dealers', fetchedDealers);
-          return fetchedDealers;
-        }
+        const fetchedDealers = all
+          .filter((d) => d.role === 'dealer')
+          .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
+        setStorageItem('dealers', fetchedDealers);
+        return fetchedDealers;
       } catch (error) {
-        console.warn("Could not query live Firestore dealers, pulling from local vault:", error);
+        console.warn('REST dealers fetch failed:', error);
       }
     }
-    return getStorageItem<DealerProfile[]>('dealers', []);
+    return getStorageItem<DealerProfile[]>('dealers', []).filter((d) => d.role === 'dealer');
   }
 
-  // --- Update Dealer Status (Admin Action) ---
   static async updateDealerStatus(
     uid: string, 
     status: DealerStatus, 
@@ -990,7 +1248,6 @@ export class DBService {
   ): Promise<void> {
     const isMock = this.isMockMode();
     
-    // Update locally
     const dealers = getStorageItem<DealerProfile[]>('dealers', []);
     const updated = dealers.map(d => {
       if (d.uid === uid) {
@@ -1000,7 +1257,6 @@ export class DBService {
           rejectionReason: status === 'Rejected' ? (reason?.rejectReason || 'Does not satisfy wholesale volume metrics.') : undefined,
           suspensionReason: status === 'Suspended' ? (reason?.suspendReason || 'Suspended due to prolonged payment inactivity.') : undefined
         };
-        // If updating the active logged in user itself, mirror changes
         const active = this.getActiveUser();
         if (active && active.uid === uid) {
           this.setActiveUser(item);
@@ -1012,54 +1268,45 @@ export class DBService {
     setStorageItem('dealers', updated);
 
     if (!isMock) {
-      try {
-        const docRef = doc(db, 'dealers', uid);
-        const updates: Partial<DealerProfile> = { status };
-        if (status === 'Rejected') {
-          updates.rejectionReason = reason?.rejectReason || 'Does not satisfy market metrics.';
-        } else if (status === 'Suspended') {
-          updates.suspensionReason = reason?.suspendReason || 'Suspended.';
-        }
-        await updateDoc(docRef, updates);
-      } catch (error) {
-        console.error("Could not sync status update to Live Firestore:", error);
+      const token = await getRestIdToken(true);
+      const updates: Record<string, unknown> = { status };
+      if (status === 'Rejected') {
+        updates.rejectionReason = reason?.rejectReason || 'Does not satisfy market metrics.';
+      } else if (status === 'Suspended') {
+        updates.suspensionReason = reason?.suspendReason || 'Suspended.';
       }
+      await withTimeout(
+        patchDocumentRest('dealers', uid, updates, token),
+        15000,
+        'Failed to update dealer status in Firebase.'
+      );
     }
   }
 
-  // --- Delete Dealer Account (Admin Action) ---
   static async deleteDealer(uid: string): Promise<void> {
     const isMock = this.isMockMode();
     
-    // Delete local
     const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    const filtered = dealers.filter(d => d.uid !== uid);
-    setStorageItem('dealers', filtered);
+    setStorageItem('dealers', dealers.filter(d => d.uid !== uid));
 
-    // Delete requirements submitted by this dealer
     const reqs = getStorageItem<StockRequirement[]>('requirements', []);
-    const filteredReqs = reqs.filter(r => r.dealerId !== uid);
-    setStorageItem('requirements', filteredReqs);
+    setStorageItem('requirements', reqs.filter(r => r.dealerId !== uid));
 
     if (!isMock) {
-      try {
-        await deleteDoc(doc(db, 'dealers', uid));
-      } catch (error) {
-        console.error("Failed to delete from Live Firestore:", error);
-      }
+      const token = await getRestIdToken(true);
+      await deleteDocumentRest('dealers', uid, token);
     }
   }
 
-  // --- Create/Add Dealer (Admin Action) ---
   static async addDealer(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
     const isMock = this.isMockMode();
-    const mockUid = 'dealer-' + Math.random().toString(36).substring(2, 11);
+    const cleanEmail = fields.email.toLowerCase().trim();
     const newProfile: DealerProfile = {
-      uid: mockUid,
+      uid: '',
       companyName: fields.companyName,
       ownerName: fields.ownerName,
       mobile: fields.mobile,
-      email: fields.email,
+      email: cleanEmail,
       gstNumber: fields.gstNumber,
       city: fields.city,
       state: fields.state,
@@ -1070,81 +1317,67 @@ export class DBService {
     };
 
     if (!isMock) {
+      let fbUid = '';
+      let dealerToken = '';
       try {
-        let fbUid = '';
         try {
-          // Attempt to register the user under Auth
-          const authResult = await createUserWithEmailAndPassword(auth, fields.email, fields.password);
+          const authResult = await withTimeout(
+            createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
+            15000,
+            'Creating dealer auth account timed out.'
+          );
           fbUid = authResult.user.uid;
+          dealerToken = await authResult.user.getIdToken();
         } catch (authError: any) {
-          // Handle existing account case gracefully
           if (
             authError?.code === 'auth/email-already-in-use' ||
             authError?.message?.includes('email-already-in-use')
           ) {
-            console.log("Dealer auth account already exists. Attempting to authenticate directly as the dealer to update/heal state...");
-            try {
-              const authResult = await signInWithEmailAndPassword(auth, fields.email, fields.password);
-              fbUid = authResult.user.uid;
-            } catch (signInErr: any) {
-              console.error("Sign in failed for existing dealer auth account:", signInErr);
-              throw new Error("A dealer with this email is already registered, and the login password provided did not match their credentials. Please use a different email or specify their correct password to complete creation.");
-            }
+            const authResult = await withTimeout(
+              signInWithEmailAndPassword(auth, cleanEmail, fields.password),
+              15000,
+              'Signing in existing dealer timed out.'
+            );
+            fbUid = authResult.user.uid;
+            dealerToken = await authResult.user.getIdToken();
           } else {
             throw authError;
           }
         }
 
         newProfile.uid = fbUid;
-
-        // Step 1: Write initial profile to Firestore with 'Pending Approval' status.
-        // This is necessary because we are temporarily signed in as the dealer, and the rules only allow
-        // self-creation with 'Pending Approval' status.
-        const initialDoc = {
-          ...newProfile,
-          status: 'Pending Approval' as const
-        };
+        const pendingProfile: DealerProfile = { ...newProfile, status: 'Pending Approval' };
         await withTimeout(
-          setDoc(doc(db, 'dealers', fbUid), initialDoc),
-          6000,
-          "Database write timed out while adding initial dealer profile."
+          writeDealerProfileViaRest(fbUid, pendingProfile, dealerToken),
+          15000,
+          'Saving dealer profile timed out.'
         );
 
-        // Step 2: Instantly sign back in as the main Admin
+        const adminToken = await getRestIdToken(true);
         await withTimeout(
-          signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-          6000,
-          "Failed to restore Admin session: sign-in timed out."
+          patchDocumentRest('dealers', fbUid, { status: 'Approved' }, adminToken),
+          15000,
+          'Approving dealer timed out.'
         );
-
-        // Step 3: Now authenticated as the Admin, promote their status to 'Approved'
-        await withTimeout(
-          updateDoc(doc(db, 'dealers', fbUid), { status: 'Approved' }),
-          6000,
-          "Database status update timed out while promoting dealer status."
-        );
-        console.log("Dealer account added and promoted to Approved successfully, Admin session restored.");
       } catch (error: any) {
-        console.error("Firebase Live Add Dealer operation failed:", error);
-        // Make sure we try to restore the admin session if any step failed while we were authenticated as the dealer
         try {
           await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
-        } catch (restoreErr) {
-          console.error("Critical: Failed to restore Admin session during error handling:", restoreErr);
+        } catch {
+          /* ignore */
         }
-        throw new Error(error?.message || "Failed to add dealer in live mode. Please verify Firestore rules.");
+        throw new Error(formatFirebaseError(error, 'Failed to add dealer.'));
       }
+    } else {
+      newProfile.uid = 'dealer-' + Math.random().toString(36).substring(2, 11);
     }
 
-    // Update local storage representation
     const dealers = getStorageItem<DealerProfile[]>('dealers', []);
-    const filtered = dealers.filter(d => d.email.toLowerCase() !== fields.email.toLowerCase());
+    const filtered = dealers.filter(d => d.email.toLowerCase() !== cleanEmail);
     filtered.unshift(newProfile);
     setStorageItem('dealers', filtered);
 
-    // Save passwords locally for fallback validations
     const passwords = getStorageItem<Record<string, string>>('credentials', {});
-    passwords[fields.email.toLowerCase()] = fields.password;
+    passwords[cleanEmail] = fields.password;
     setStorageItem('credentials', passwords);
 
     return newProfile;
@@ -1227,25 +1460,19 @@ export class DBService {
     const isMock = this.isMockMode();
     if (!isMock) {
       try {
-        const colRef = collection(db, 'requirements');
-        let q = query(colRef);
-        if (dealerId) {
-          q = query(colRef, where('dealerId', '==', dealerId));
-        }
-        const querySnap = await withTimeout(
-          getDocs(q),
-          5000,
-          "Stock requirements request timed out."
+        const fetchedReqs = await withTimeout(
+          listCollectionRest<StockRequirement>('requirements', !dealerId),
+          15000,
+          'Stock requirements request timed out.'
         );
-        const fetchedReqs: StockRequirement[] = [];
-        querySnap.forEach(d => {
-          fetchedReqs.push(d.data() as StockRequirement);
-        });
-        if (fetchedReqs.length > 0) {
-          return fetchedReqs;
+        const filtered = dealerId
+          ? fetchedReqs.filter((r) => r.dealerId === dealerId)
+          : fetchedReqs;
+        if (filtered.length > 0) {
+          return filtered;
         }
       } catch (error) {
-        console.warn("Failed retrieving requirements from Firestore, using local:", error);
+        console.warn('REST requirements fetch failed, using local:', error);
       }
     }
 
