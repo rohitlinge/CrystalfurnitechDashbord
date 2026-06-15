@@ -26,10 +26,26 @@ import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryIte
 
 import firebaseAppletConfig from '../firebase-applet-config.json';
 
+// Support VITE_ environment variables (commonly set on host environments like Vercel)
+// with fallback to the local compiled firebase-applet-config.json representation.
+const env = (import.meta as any).env || {};
+
+const firebaseConfig = {
+  apiKey: env.VITE_FIREBASE_API_KEY || firebaseAppletConfig.apiKey,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || firebaseAppletConfig.authDomain,
+  projectId: env.VITE_FIREBASE_PROJECT_ID || firebaseAppletConfig.projectId,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebaseAppletConfig.storageBucket,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseAppletConfig.messagingSenderId,
+  appId: env.VITE_FIREBASE_APP_ID || firebaseAppletConfig.appId,
+  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || firebaseAppletConfig.measurementId || ""
+};
+
+const databaseId = env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseAppletConfig.firestoreDatabaseId;
+
 // Initialize Firebase
-const app = getApps().length === 0 ? initializeApp(firebaseAppletConfig) : getApp();
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseAppletConfig.firestoreDatabaseId);
+export const db = getFirestore(app, databaseId);
 
 // Initial Categories specification
 export const INITIAL_CATEGORIES: CategoryItem[] = [
