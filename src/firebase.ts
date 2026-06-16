@@ -1609,7 +1609,7 @@ export class DBService {
   // --- Submit Stock Requirement (Dealer Action) ---
   static async submitStockRequirement(reqData: Omit<StockRequirement, 'id' | 'requestedDate' | 'status'>): Promise<StockRequirement> {
     await ensureAuthenticated();
-    const newReqId = 'req-' + Math.random().toString(36).substring(2, 11);
+    const newReqId = 'req_' + Math.random().toString(36).substring(2, 11);
     const newReq: StockRequirement = {
       ...reqData,
       id: newReqId,
@@ -1617,34 +1617,59 @@ export class DBService {
       status: 'Pending'
     };
 
-    await runTransaction(db, async (transaction) => {
-      const productRef = doc(db, 'products', reqData.productId);
-      const productDoc = await transaction.get(productRef);
-      
-      if (!productDoc.exists()) {
-        throw new Error("Product does not exist.");
-      }
-      
-      const productData = productDoc.data() as ProductItem;
-      const currentStock = productData.availableStock || 0;
-      
-      if (currentStock < reqData.quantityRequested) {
-        throw new Error(`Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`);
-      }
-      
-      const nextStock = currentStock - reqData.quantityRequested;
-      const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-      const status = nextStock === 0 ? 'Out Of Stock' : 'Available';
-      
-      const reqRef = doc(db, 'requirements', newReqId);
-      
-      transaction.set(reqRef, newReq);
-      transaction.update(productRef, {
-        availableStock: nextStock,
-        stockStatus,
-        status
+    // #region agent log
+    debugLog('firebase.ts:submitStockRequirement', 'Submit started', {
+      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+      reqId: newReqId,
+      productId: reqData.productId,
+      quantity: reqData.quantityRequested,
+      dealerId: reqData.dealerId,
+      authUid: auth.currentUser?.uid,
+    }, 'G');
+    // #endregion
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const productRef = doc(db, 'products', reqData.productId);
+        const productDoc = await transaction.get(productRef);
+
+        if (!productDoc.exists()) {
+          throw new Error("Product does not exist.");
+        }
+
+        const productData = productDoc.data() as ProductItem;
+        const currentStock = productData.availableStock || 0;
+
+        if (currentStock < reqData.quantityRequested) {
+          throw new Error(`Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`);
+        }
+
+        const nextStock = currentStock - reqData.quantityRequested;
+        const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+        const status = nextStock === 0 ? 'Out Of Stock' : 'Available';
+
+        const reqRef = doc(db, 'requirements', newReqId);
+
+        transaction.set(reqRef, newReq);
+        transaction.update(productRef, {
+          availableStock: nextStock,
+          stockStatus,
+          status
+        });
       });
-    });
+      // #region agent log
+      debugLog('firebase.ts:submitStockRequirement', 'Submit success', { reqId: newReqId }, 'G');
+      // #endregion
+    } catch (error: unknown) {
+      const err = error as { code?: string; message?: string };
+      // #region agent log
+      debugLog('firebase.ts:submitStockRequirement', 'Submit failed', {
+        code: err?.code || '',
+        message: err?.message || String(error),
+      }, 'G');
+      // #endregion
+      throw error;
+    }
 
     return newReq;
   }

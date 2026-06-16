@@ -118,8 +118,16 @@ service cloud.firestore {
     // --- Products Collection ---
     match /products/{productId} {
       allow read: if isSignedIn();
-      allow create, update: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data);
-      allow delete: if isAdmin() && isValidId(productId);
+      allow create, delete: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data);
+      // Admin: full catalog edits. Dealer: reserve/refund stock during stock indent submit/cancel.
+      allow update: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data) ||
+        (
+          isSignedIn() && isValidId(productId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['availableStock', 'stockStatus', 'status']) &&
+          (request.resource.data.availableStock is int || request.resource.data.availableStock is number) &&
+          request.resource.data.availableStock >= 0 &&
+          request.resource.data.status in ['Available', 'Out Of Stock']
+        );
     }
 
     // --- Stock Requirements Collection ---
