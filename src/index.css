@@ -1,25 +1,124 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,450&family=Playfair+Display:ital,wght@0,500;1,500&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;1,600&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Playfair Display", Georgia, serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  
-  --color-dark-bg: #09090b;
-  --color-dark-surface: #18181b;
-  --color-dark-border: #27272a;
-  --color-dark-accent: #a1a1aa;
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  
-  --color-status-pending: #f59e0b;
-  --color-status-approved: #10b981;
-  --color-status-rejected: #ef4444;
+
+  --color-brand: #b65200;
+  --color-brand-dark: #8f4100;
+  --color-brand-light: #fef3e8;
+  --color-brand-muted: #f5e6d8;
+
+  --color-status-pending: #b65200;
+  --color-status-approved: #166534;
+  --color-status-rejected: #991b1b;
 }
 
 body {
   font-family: var(--font-sans);
-  background-color: #09090b;
-  color: #fafafa;
+  background-color: #ffffff;
+  color: #000000;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Admin desktop shell ── */
+.cf-admin {
+  background: #f5f5f5;
+  color: #000;
+}
+
+.cf-admin-sidebar {
+  background: #000;
+  color: #fff;
+}
+
+.cf-admin-card {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 0.75rem;
+}
+
+.cf-btn-brand {
+  background: #b65200;
+  color: #fff;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+.cf-btn-brand:hover:not(:disabled) {
+  background: #8f4100;
+}
+.cf-btn-brand:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cf-btn-outline {
+  background: transparent;
+  border: 1px solid #d4d4d4;
+  color: #000;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.cf-btn-outline:hover {
+  border-color: #b65200;
+  color: #b65200;
+}
+
+.cf-input {
+  background: #fff;
+  border: 1px solid #d4d4d4;
+  color: #000;
+  border-radius: 0.5rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.cf-input:focus {
+  border-color: #b65200;
+}
+
+/* ── Dealer mobile shell ── */
+.cf-dealer {
+  background: #fafafa;
+  color: #000;
+  padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+}
+
+.cf-dealer-header {
+  background: #000;
+  color: #fff;
+}
+
+.cf-dealer-bottom-nav {
+  background: #fff;
+  border-top: 1px solid #e5e5e5;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.cf-dealer-tab-active {
+  color: #b65200;
+}
+
+.cf-product-card {
+  background: #fff;
+  border: 1px solid #e5e5e5;
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
 }
