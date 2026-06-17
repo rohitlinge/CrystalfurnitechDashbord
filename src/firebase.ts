@@ -52,46 +52,16 @@ const firebaseConfig = {
 
 const databaseId = readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID') || firebaseAppletConfig.firestoreDatabaseId;
 
-/** Debug instrumentation — session a1718d */
-function debugLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string, runId = 'post-fix') {
-  const payload = { sessionId: 'a1718d', location, message, data, hypothesisId, timestamp: Date.now(), runId };
-  // #region agent log
-  const isLocalHost =
-    typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-  if (isLocalHost) {
-    fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'a1718d' }, body: JSON.stringify(payload) }).catch(() => {});
-  }
-  // #endregion
-  if (typeof window !== 'undefined') {
-    const w = window as Window & { __CF_DEBUG__?: typeof payload[] };
-    w.__CF_DEBUG__ = w.__CF_DEBUG__ || [];
-    w.__CF_DEBUG__.push(payload);
-    try {
-      sessionStorage.setItem('cf_debug_a1718d', JSON.stringify(w.__CF_DEBUG__.slice(-50)));
-    } catch { /* quota */ }
-  }
-}
-
-// #region agent log
-debugLog('firebase.ts:init', 'Firebase config loaded', {
-  hostname: typeof window !== 'undefined' ? window.location.hostname : 'ssr',
-  origin: typeof window !== 'undefined' ? window.location.origin : '',
-  projectId: firebaseConfig.projectId,
-  authDomain: firebaseConfig.authDomain,
-  databaseId,
-  configSource: {
-    apiKeyFromEnv: !!readEnv('VITE_FIREBASE_API_KEY'),
-    projectFromEnv: !!readEnv('VITE_FIREBASE_PROJECT_ID'),
-    dbFromEnv: !!readEnv('VITE_FIREBASE_FIRESTORE_DATABASE_ID'),
-  },
-  apiKeyPrefix: firebaseConfig.apiKey?.slice(0, 8),
-}, 'A', 'pre-fix');
-// #endregion
-
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
+
+/** Secondary auth app — create dealer accounts without replacing the admin session. */
+function getSecondaryAuth() {
+  const secondaryApp = getApps().find((a) => a.name === 'Secondary')
+    ?? initializeApp(firebaseConfig, 'Secondary');
+  return getAuth(secondaryApp);
+}
 // Auto-detect long polling on restrictive networks — avoid forceLongPolling (causes SDK assertion crashes)
 export const db = initializeFirestore(
   app,
@@ -175,19 +145,25 @@ async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   }
 }
 
-/** Ensure admin Firebase Auth session for privileged operations. */
+/** Verify the current session belongs to an admin — never re-signs in with embedded credentials. */
 async function ensureAdminAuthenticated(): Promise<void> {
-  await prepareFirestoreWrite();
-  if (auth.currentUser?.email !== 'admin@crystalfurnitech.com') {
-    await withTimeout(
-      signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-      12000,
-      'Admin session required. Please log in again.'
-    );
-  }
-  if (!auth.currentUser) {
+  await ensureAuthenticated();
+  const user = auth.currentUser;
+  if (!user) {
     throw new Error('Admin session required. Please log in again.');
   }
+  if (user.email?.toLowerCase() === 'admin@crystalfurnitech.com') {
+    return;
+  }
+  const profile = await getDocument<DealerProfile>(
+    'dealers',
+    user.uid,
+    'Admin profile verification timed out.'
+  );
+  if (profile?.role === 'admin') {
+    return;
+  }
+  throw new Error('Admin session required. Please log in again.');
 }
 
 function mapDocSnapshot<T>(snap: DocumentSnapshot): T | null {
@@ -321,13 +297,7 @@ function fromFirestoreRestFields(fields: Record<string, unknown>): Record<string
 
 async function getRestIdToken(requireAdmin = false): Promise<string> {
   if (requireAdmin) {
-    if (auth.currentUser?.email !== 'admin@crystalfurnitech.com') {
-      await withTimeout(
-        signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-        12000,
-        'Admin session required. Please log in again.'
-      );
-    }
+    await ensureAdminAuthenticated();
   } else if (!auth.currentUser) {
     throw new Error('Not authenticated with Firebase. Please log in again.');
   }
@@ -478,7 +448,7 @@ async function fetchAuthorizedDomains(): Promise<string[]> {
   if (cachedAuthorizedDomains) return cachedAuthorizedDomains;
   try {
     const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`
+      `https://www.googleapis.com/identitytoolkit/v3/relyingparty/getProjectConfig?key=${encodeURIComponent(firebaseConfig.apiKey)}`
     );
     if (!res.ok) return [];
     const data = (await res.json()) as { authorizedDomains?: string[] };
@@ -531,9 +501,6 @@ export async function runFirebaseDiagnostics(): Promise<{ ok: boolean; lines: st
     ok = false;
   }
 
-  // #region agent log
-  debugLog('firebase.ts:runFirebaseDiagnostics', 'Diagnostics complete', { hostname, ok, lines }, 'F');
-  // #endregion
   return { ok, lines };
 }
 
@@ -548,23 +515,8 @@ async function checkFirestoreViaRest(timeoutMs: number): Promise<boolean> {
       `?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
     const res = await fetch(url, { signal: controller.signal });
     const ok = res.ok || res.status === 404 || res.status === 403;
-    // #region agent log
-    debugLog('firebase.ts:checkFirestoreViaRest', 'REST ping result', {
-      status: res.status,
-      ok,
-      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-      projectId: firebaseConfig.projectId,
-      databaseId,
-    }, ok ? 'D' : 'C');
-    // #endregion
     return ok;
-  } catch (err) {
-    // #region agent log
-    debugLog('firebase.ts:checkFirestoreViaRest', 'REST ping failed', {
-      error: err instanceof Error ? err.message : String(err),
-      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-    }, 'C');
-    // #endregion
+  } catch {
     return false;
   } finally {
     clearTimeout(timer);
@@ -578,42 +530,21 @@ export async function ensureFirebaseConnection(timeoutMs: number = 20000): Promi
 
   try {
     await prepareFirestoreWriteOnce();
-  } catch (err) {
-    // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'enableNetwork failed', {
-      error: err instanceof Error ? err.message : String(err),
-      hostname,
-    }, 'E');
-    // #endregion
+  } catch {
+    /* network may still work via REST */
   }
 
-  // Local dev: verify with REST ping (SDK getDoc races cause INTERNAL ASSERTION crashes)
   if (isLocal && (await checkFirestoreViaRest(Math.min(timeoutMs, 12000)))) {
-    // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'Connected via REST', { hostname }, 'D');
-    // #endregion
     return true;
   }
 
-  // Deployed (Vercel): REST ping uses API key in URL — often blocked by HTTP referrer rules.
-  // Network is enabled; login will surface auth/domain errors if Firebase Console is not configured.
   if (!isLocal) {
     const setupHint = await getFirebaseSetupHint();
-    const diagnostics = await runFirebaseDiagnostics();
-    // #region agent log
-    debugLog('firebase.ts:ensureFirebaseConnection', 'Deployed host — network ready', {
-      hostname,
-      setupHint,
-      diagnostics,
-    }, 'C');
-    // #endregion
+    await runFirebaseDiagnostics();
     if (setupHint) return false;
     return true;
   }
 
-  // #region agent log
-  debugLog('firebase.ts:ensureFirebaseConnection', 'Local REST check failed', { hostname }, 'E');
-  // #endregion
   return false;
 }
 
@@ -1050,41 +981,21 @@ export class DBService {
     return false;
   }
 
-  static async initializeAndSeedLiveDb(): Promise<void> {
-    const isMock = this.isMockMode();
-    if (isMock) {
-      throw new Error("Please switch to Live Firebase mode in the login panel first.");
+  static async initializeAndSeedLiveDb(adminEmail: string, adminPassword: string): Promise<void> {
+    if (!adminEmail || !adminPassword) {
+      throw new Error('Admin email and password are required for seeding. Use Firebase Console or npm run seed:requirements.');
     }
 
     try {
       console.log("Starting Firebase Auth & Firestore seeding process...");
       await enableNetwork(db);
-      // Step 1: Create or Sign In as Admin
       let fbUid = '';
-      try {
-        const authResult = await withTimeout(
-          signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-          20000,
-          "Admin sign-in operation timed out."
-        );
-        fbUid = authResult.user.uid;
-      } catch (signInErr: any) {
-        console.log("Sign-in failed/user not found, attempting to register 'admin@crystalfurnitech.com'...", signInErr.message);
-        try {
-          const authResult = await withTimeout(
-            createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-            20000,
-            "Admin registration operation timed out."
-          );
-          fbUid = authResult.user.uid;
-        } catch (createErr: any) {
-          if (auth.currentUser) {
-            fbUid = auth.currentUser.uid;
-          } else {
-            throw new Error(`Failed to create or sign in admin user: ${createErr.message || createErr}`);
-          }
-        }
-      }
+      const authResult = await withTimeout(
+        signInWithEmailAndPassword(auth, adminEmail.toLowerCase().trim(), adminPassword),
+        20000,
+        'Admin sign-in operation timed out.'
+      );
+      fbUid = authResult.user.uid;
 
       if (fbUid) {
         // Step 2: Write Admin document to Firestore /dealers/{uid}
@@ -1277,12 +1188,6 @@ export class DBService {
   // --- Registration / Sign Up ---
   static async register(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
     const cleanEmail = fields.email.toLowerCase().trim();
-    // #region agent log
-    debugLog('firebase.ts:register', 'Registration started', {
-      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-      emailDomain: cleanEmail.split('@')[1] || '',
-    }, 'B');
-    // #endregion
     const newProfile: DealerProfile = {
       uid: '',
       companyName: fields.companyName,
@@ -1325,9 +1230,6 @@ export class DBService {
       } catch {
         /* ignore */
       }
-      // #region agent log
-      debugLog('firebase.ts:register', 'Registration success', { uid: newProfile.uid, hostname: window.location.hostname }, 'B');
-      // #endregion
     } catch (error: unknown) {
       const err = error as { code?: string; message?: string };
       console.error("Firebase Live Sign Up failed:", error);
@@ -1368,100 +1270,31 @@ export class DBService {
     return newProfile;
   }
 
+  static async refreshUserProfile(): Promise<DealerProfile | null> {
+    await waitForAuthReady();
+    const user = auth.currentUser;
+    if (!user) return null;
+    const profile = await getDocument<DealerProfile>(
+      'dealers',
+      user.uid,
+      'Profile refresh timed out.'
+    );
+    if (profile) {
+      this.setActiveUser(profile);
+    }
+    return profile;
+  }
+
   // --- Login ---
   static async login(email: string, password: string): Promise<DealerProfile> {
     const cleanEmail = email.toLowerCase().trim();
     this.clearStaleDataCache();
-    // #region agent log
-    debugLog('firebase.ts:login', 'Login attempt started', {
-      hostname: window.location.hostname,
-      origin: window.location.origin,
-      isAdmin: cleanEmail === 'admin@crystalfurnitech.com',
-    }, 'B');
-    // #endregion
-    
-    // Check master admin password override or standard login
-    if (cleanEmail === 'admin@crystalfurnitech.com' && password === 'admin123') {
-      const adminProfile: DealerProfile = {
-        uid: 'admin-master',
-        companyName: 'Crystal Furnitech Corporate Office',
-        ownerName: 'Executive Admin',
-        mobile: '1800123456',
-        email: 'admin@crystalfurnitech.com',
-        gstNumber: 'N/A',
-        city: 'Nagpur',
-        state: 'Maharashtra',
-        address: 'HQ Industrial Estate, Nagpur',
-        status: 'Approved',
-        registrationDate: new Date().toISOString(),
-        role: 'admin'
-      };
-
-      try {
-        const authResult = await withTimeout(
-          signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-          12000,
-          "Admin sign-in timed out. Please check your connection."
-        );
-        const fbUid = authResult.user.uid;
-        adminProfile.uid = fbUid;
-
-        try {
-          const liveProfile = await withRetry(
-            () =>
-              getDocument<DealerProfile>(
-                'dealers',
-                fbUid,
-                'Admin profile fetch timed out.'
-              ),
-            'Admin profile fetch'
-          );
-          if (liveProfile) {
-            Object.assign(adminProfile, liveProfile);
-          }
-        } catch {
-          /* use built-in admin profile */
-        }
-
-        setDoc(doc(db, 'dealers', fbUid), adminProfile, { merge: true }).catch((fsErr) =>
-          console.warn("Background admin profile sync:", fsErr)
-        );
-      } catch (signInErr: unknown) {
-        const err = signInErr as { code?: string };
-        if (
-          err.code === 'auth/user-not-found' ||
-          err.code === 'auth/invalid-credential' ||
-          err.code === 'auth/invalid-email' ||
-          err.code === 'auth/user-disabled'
-        ) {
-          try {
-            const authResult = await withTimeout(
-              createUserWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123'),
-              12000,
-              "Admin registration timed out."
-            );
-            adminProfile.uid = authResult.user.uid;
-            setDoc(doc(db, 'dealers', authResult.user.uid), adminProfile, { merge: true }).catch(console.warn);
-          } catch (createErr) {
-            throw new Error(formatFirebaseError(createErr, "Could not sign in or create admin account."));
-          }
-        } else {
-          throw new Error(formatFirebaseError(signInErr, "Admin login failed."));
-        }
-      }
-
-      this.setActiveUser(adminProfile);
-      // #region agent log
-      debugLog('firebase.ts:login', 'Admin login success', { uid: adminProfile.uid, hostname: window.location.hostname }, 'B');
-      // #endregion
-      return adminProfile;
-    }
 
     try {
       const authResult = await withTimeout(
         signInWithEmailAndPassword(auth, cleanEmail, password),
         15000,
-        "Login request timed out. Please check your network connection."
+        'Login request timed out. Please check your network connection.'
       );
       const fbUid = authResult.user.uid;
 
@@ -1470,28 +1303,21 @@ export class DBService {
           getDocument<DealerProfile>(
             'dealers',
             fbUid,
-            'Retrieving dealer profile timed out.'
+            'Retrieving profile timed out.'
           ),
-        'Dealer profile fetch'
+        'Profile fetch'
       );
-      if (profile) {
-        this.setActiveUser(profile);
-        // #region agent log
-        debugLog('firebase.ts:login', 'Dealer login success', { uid: profile.uid, hostname: window.location.hostname }, 'B');
-        // #endregion
-        return profile;
+
+      if (!profile) {
+        throw new Error(
+          'Your account exists in Firebase Auth but has no profile in Firestore. Please contact support or re-register.'
+        );
       }
-      throw new Error("Your account exists in Firebase Auth but has no dealer profile in Firestore. Please contact support or re-register.");
+
+      this.setActiveUser(profile);
+      return profile;
     } catch (error: unknown) {
-      const err = error as { code?: string; message?: string };
-      // #region agent log
-      debugLog('firebase.ts:login', 'Login failed', {
-        code: err?.code || '',
-        message: err?.message || String(error),
-        hostname: window.location.hostname,
-      }, 'B');
-      // #endregion
-      throw new Error(formatFirebaseError(error, "Login failed. Please verify your credentials."));
+      throw new Error(formatFirebaseError(error, 'Login failed. Please verify your credentials.'));
     }
   }
 
@@ -1557,9 +1383,10 @@ export class DBService {
 
     let fbUid = '';
     try {
+      const secondaryAuth = getSecondaryAuth();
       try {
         const authResult = await withTimeout(
-          createUserWithEmailAndPassword(auth, cleanEmail, fields.password),
+          createUserWithEmailAndPassword(secondaryAuth, cleanEmail, fields.password),
           15000,
           'Creating dealer auth account timed out.'
         );
@@ -1571,7 +1398,7 @@ export class DBService {
           err?.message?.includes('email-already-in-use')
         ) {
           const authResult = await withTimeout(
-            signInWithEmailAndPassword(auth, cleanEmail, fields.password),
+            signInWithEmailAndPassword(secondaryAuth, cleanEmail, fields.password),
             15000,
             'Signing in existing dealer timed out.'
           );
@@ -1579,36 +1406,36 @@ export class DBService {
         } else {
           throw authError;
         }
+      } finally {
+        try {
+          await fbSignOut(secondaryAuth);
+        } catch {
+          /* ignore */
+        }
       }
 
       newProfile.uid = fbUid;
-      try {
-        await fbSignOut(auth);
-      } catch {
-        /* ignore */
-      }
-      await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
-      const adminToken = await auth.currentUser!.getIdToken();
+      const profilePayload = { ...newProfile, uid: fbUid, status: 'Approved' as const, role: 'dealer' as const };
+
       await withTimeout(
-        writeDealerProfileViaRest(fbUid, { ...newProfile, status: 'Approved' }, adminToken),
+        setDoc(doc(db, 'dealers', fbUid), profilePayload, { merge: true }),
         15000,
         'Saving dealer profile timed out.'
       );
     } catch (error: unknown) {
-      try {
-        await signInWithEmailAndPassword(auth, 'admin@crystalfurnitech.com', 'admin123');
-      } catch {
-        /* ignore */
-      }
       throw new Error(formatFirebaseError(error, 'Failed to add dealer.'));
     }
 
-    return newProfile;
+    return { ...newProfile, uid: fbUid };
   }
 
   // --- Submit Stock Requirement (Dealer Action) ---
   static async submitStockRequirement(reqData: Omit<StockRequirement, 'id' | 'requestedDate' | 'status'>): Promise<StockRequirement> {
     await ensureAuthenticated();
+    if (auth.currentUser?.uid !== reqData.dealerId) {
+      throw new Error('You can only submit indents for your own dealer account.');
+    }
+
     const newReqId = 'req_' + Math.random().toString(36).substring(2, 11);
     const newReq: StockRequirement = {
       ...reqData,
@@ -1617,57 +1444,28 @@ export class DBService {
       status: 'Pending'
     };
 
-    // #region agent log
-    debugLog('firebase.ts:submitStockRequirement', 'Submit started', {
-      hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-      reqId: newReqId,
-      productId: reqData.productId,
-      quantity: reqData.quantityRequested,
-      dealerId: reqData.dealerId,
-      authUid: auth.currentUser?.uid,
-    }, 'G');
-    // #endregion
-
     try {
       await runTransaction(db, async (transaction) => {
         const productRef = doc(db, 'products', reqData.productId);
         const productDoc = await transaction.get(productRef);
 
         if (!productDoc.exists()) {
-          throw new Error("Product does not exist.");
+          throw new Error('Product does not exist.');
         }
 
         const productData = productDoc.data() as ProductItem;
         const currentStock = productData.availableStock || 0;
 
         if (currentStock < reqData.quantityRequested) {
-          throw new Error(`Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`);
+          throw new Error(
+            `Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`
+          );
         }
 
-        const nextStock = currentStock - reqData.quantityRequested;
-        const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-        const status = nextStock === 0 ? 'Out Of Stock' : 'Available';
-
         const reqRef = doc(db, 'requirements', newReqId);
-
         transaction.set(reqRef, newReq);
-        transaction.update(productRef, {
-          availableStock: nextStock,
-          stockStatus,
-          status
-        });
       });
-      // #region agent log
-      debugLog('firebase.ts:submitStockRequirement', 'Submit success', { reqId: newReqId }, 'G');
-      // #endregion
     } catch (error: unknown) {
-      const err = error as { code?: string; message?: string };
-      // #region agent log
-      debugLog('firebase.ts:submitStockRequirement', 'Submit failed', {
-        code: err?.code || '',
-        message: err?.message || String(error),
-      }, 'G');
-      // #endregion
       throw error;
     }
 
@@ -1693,43 +1491,84 @@ export class DBService {
     return allReqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
   }
 
-  // --- Update Stock Requirement Status (Admin Action) ---
+  // --- Update Stock Requirement Status ---
   static async updateStockRequirementStatus(id: string, status: 'Pending' | 'Fulfilled' | 'Cancelled'): Promise<void> {
-    await ensureAuthenticated();
+    // #region agent log
+    fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:entry',message:'fulfill flow started',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    if (status === 'Fulfilled') {
+      await ensureAdminAuthenticated();
+    } else {
+      await ensureAuthenticated();
+    }
 
-    await runTransaction(db, async (transaction) => {
-      const reqRef = doc(db, 'requirements', id);
-      const reqDoc = await transaction.get(reqRef);
-      
-      if (!reqDoc.exists()) {
-        throw new Error("Requirement does not exist.");
-      }
-      
-      const reqData = reqDoc.data() as StockRequirement;
-      const oldStatus = reqData.status;
-      
-      if (oldStatus !== status) {
+    try {
+      await runTransaction(db, async (transaction) => {
+        const reqRef = doc(db, 'requirements', id);
+        const reqDoc = await transaction.get(reqRef);
+
+        if (!reqDoc.exists()) {
+          throw new Error('Requirement does not exist.');
+        }
+
+        const reqData = reqDoc.data() as StockRequirement;
+        const oldStatus = reqData.status;
+
+        // #region agent log
+        fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:reqRead',message:'requirement loaded in transaction',data:{reqId:id,oldStatus,targetStatus:status,productId:reqData.productId,quantityRequested:reqData.quantityRequested,qtyType:typeof reqData.quantityRequested,willEarlyReturn:oldStatus===status,willDecrementStock:oldStatus==='Pending'&&status==='Fulfilled'},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+
+        if (oldStatus === status) return;
+
         transaction.update(reqRef, { status });
-        
-        if (oldStatus === 'Pending' && status === 'Cancelled') {
+
+        if (oldStatus === 'Pending' && status === 'Fulfilled') {
           const productRef = doc(db, 'products', reqData.productId);
           const productDoc = await transaction.get(productRef);
-          
-          if (productDoc.exists()) {
-            const productData = productDoc.data() as ProductItem;
-            const nextStock = (productData.availableStock || 0) + reqData.quantityRequested;
-            const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-            const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
-            
-            transaction.update(productRef, {
-              availableStock: nextStock,
-              stockStatus,
-              status: prodStatus
-            });
+
+          if (!productDoc.exists()) {
+            // #region agent log
+            fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:productMissing',message:'product doc not found for fulfill',data:{productId:reqData.productId},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+            // #endregion
+            throw new Error('Product does not exist.');
           }
+
+          const productData = productDoc.data() as ProductItem;
+          const currentStock = productData.availableStock || 0;
+
+          if (currentStock < reqData.quantityRequested) {
+            // #region agent log
+            fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:insufficientStock',message:'insufficient stock to fulfill',data:{productId:reqData.productId,currentStock,quantityRequested:reqData.quantityRequested},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
+            // #endregion
+            throw new Error(
+              `Insufficient stock to fulfill. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
+            );
+          }
+
+          const nextStock = currentStock - reqData.quantityRequested;
+          const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+          const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
+
+          // #region agent log
+          fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:stockDecrement',message:'applying stock decrement in transaction',data:{productId:reqData.productId,productName:productData.name,currentStock,quantityRequested:reqData.quantityRequested,nextStock,stockStatus,prodStatus,priceType:typeof productData.price},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+          // #endregion
+
+          transaction.update(productRef, {
+            availableStock: nextStock,
+            stockStatus,
+            status: prodStatus,
+          });
         }
-      }
-    });
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'transaction committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+    } catch (error: unknown) {
+      // #region agent log
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:error',message:'transaction failed',data:{reqId:id,targetStatus:status,error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      throw error;
+    }
   }
 
   // --- Delete Stock Requirement (Admin Action) ---

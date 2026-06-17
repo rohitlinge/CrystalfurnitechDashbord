@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { DBService } from '../firebase';
 import { DealerProfile, ProductItem, StockRequirement, CategoryItem } from '../types';
 import BrandLogo from './BrandLogo';
+import Toast, { ToastMessage } from './Toast';
 import {
   Search, LogOut, Package2, ClipboardList, User, ShoppingCart, RefreshCw,
   CheckCircle, X, FileText, Download, AlertTriangle
@@ -15,6 +16,10 @@ interface DealerDashboardProps {
 type MobileTab = 'catalog' | 'orders' | 'account';
 
 export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboardProps) {
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const showToast = (message: string, type: ToastMessage['type'] = 'error') =>
+    setToast({ id: Date.now(), message, type });
+
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [myRequirements, setMyRequirements] = useState<StockRequirement[]>([]);
@@ -63,11 +68,11 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
     e.preventDefault();
     if (!selectedProduct) return;
     if (requestQty < 1) {
-      alert('Please request at least 1 unit.');
+      showToast('Please request at least 1 unit.', 'info');
       return;
     }
     if (requestQty > selectedProduct.availableStock) {
-      alert(`Only ${selectedProduct.availableStock} units available.`);
+      showToast(`Only ${selectedProduct.availableStock} units available.`, 'info');
       return;
     }
 
@@ -92,7 +97,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
       }, 1800);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to submit indent.';
-      alert(msg);
+      showToast(msg);
     } finally {
       setSubmitting(false);
     }
@@ -102,7 +107,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
     setConfirmModal({
       isOpen: true,
       title: 'Cancel Stock Indent',
-      message: 'Cancel this pending request? Reserved stock will be released back to the catalog.',
+      message: 'Cancel this pending stock indent request?',
       actionLabel: 'Yes, Cancel',
       onConfirm: async () => {
         await DBService.updateStockRequirementStatus(reqId, 'Cancelled');
@@ -129,6 +134,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
 
   return (
     <div className="cf-dealer min-h-screen flex flex-col">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <header className="cf-dealer-header sticky top-0 z-20 px-4 py-3 flex items-center justify-between">
         <BrandLogo variant="light" size="sm" subtitle="Dealer Portal" />
         <button
@@ -198,7 +204,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                         </div>
                         <div className="flex items-end justify-between mt-2">
                           <div>
-                            <p className="text-base font-bold text-white">₹{p.price.toLocaleString('en-IN')}</p>
+                            <p className="text-base font-bold text-white">₹{(p.wholesalePrice || p.price).toLocaleString('en-IN')}</p>
                             <p className={`text-[10px] font-semibold ${
                               p.availableStock === 0 ? 'text-red-400' : p.availableStock <= 5 ? 'text-[#d66b0f]' : 'text-green-400'
                             }`}>

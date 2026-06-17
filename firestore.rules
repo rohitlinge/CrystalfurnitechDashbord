@@ -3,27 +3,26 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: Is the caller signed in?
     function isSignedIn() {
       return request.auth != null;
     }
 
-    // Helper: Check if document ID is formatted securely (ID Poisoning Guard)
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
-    // Helper: Does the caller own the document?
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Helper: Lookup the caller's role in the 'dealers' collection
-    function getRole() {
-      return get(/databases/$(database)/documents/dealers/$(request.auth.uid)).data.role;
+    function dealerDoc() {
+      return get(/databases/$(database)/documents/dealers/$(request.auth.uid));
     }
 
-    // Helper: Is the caller an administrator?
+    function getRole() {
+      return dealerDoc().data.role;
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'admin@crystalfurnitech.com' ||
@@ -31,7 +30,13 @@ service cloud.firestore {
       );
     }
 
-    // Validator: Strict schema enforcement for dealer profile
+    function isApprovedDealer() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/dealers/$(request.auth.uid)) &&
+        getRole() == 'dealer' &&
+        dealerDoc().data.status == 'Approved';
+    }
+
     function isValidDealer(data) {
       return data.companyName is string && data.companyName.size() >= 3 && data.companyName.size() <= 100 &&
              data.ownerName is string && data.ownerName.size() >= 2 && data.ownerName.size() <= 100 &&
@@ -43,13 +48,11 @@ service cloud.firestore {
              data.address is string && data.address.size() >= 5 && data.address.size() <= 300;
     }
 
-    // Validator: Strict schema enforcement for category
     function isValidCategory(data) {
       return data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
              data.isActive is bool;
     }
 
-    // Validator: Strict schema enforcement for product
     function isValidProduct(data) {
       return data.name is string && data.name.size() >= 3 && data.name.size() <= 100 &&
              data.sku is string && data.sku.size() >= 3 && data.sku.size() <= 50 &&
@@ -58,44 +61,45 @@ service cloud.firestore {
              data.status in ['Available', 'Out Of Stock'];
     }
 
-    // Validator: Strict schema enforcement for stock requirements
     function isValidRequirement(data) {
       return (data.quantityRequested is int || data.quantityRequested is number) && data.quantityRequested >= 1 &&
              data.productId is string && data.productId.size() > 0 &&
              data.productName is string && data.productName.size() >= 3 &&
+             data.dealerId is string && data.dealerId.size() > 0 &&
              data.status in ['Pending', 'Fulfilled', 'Cancelled'];
     }
 
-    // Universal Global Safety Net: Deny everything by default
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // --- Connection Verification Endpoint ---
     match /test/{docId} {
-      allow read: if true;
+      allow read: if isSignedIn();
     }
 
-    // --- Users / Dealers Collection ---
     match /dealers/{userId} {
       allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
-      
-      // Verification logic during registration
-      allow create: if isSignedIn() && isOwner(userId) && isValidId(userId) && isValidDealer(request.resource.data) && (
-        request.auth.token.email == 'admin@crystalfurnitech.com' || (
+
+      // Admin creates approved dealer profiles; dealers self-register as pending.
+      allow create: if isSignedIn() && isValidId(userId) && isValidDealer(request.resource.data) && (
+        (
+          isAdmin() &&
+          request.resource.data.role == 'dealer' &&
+          request.resource.data.status == 'Approved' &&
+          request.resource.data.uid == userId
+        ) || (
+          isOwner(userId) &&
           request.resource.data.role == 'dealer' &&
           request.resource.data.status == 'Pending Approval' &&
+          request.resource.data.uid == userId &&
           (request.auth.token.email == null || request.resource.data.email.lower() == request.auth.token.email.lower())
         )
       );
 
-      // Actions allowed on updates:
-      // 1. Admin can approve, reject, suspend, or change roles.
-      // 2. Dealer can only update profile contact info (company name, mobile, address, etc.) and is locked out of status/role updates.
       allow update: if isSignedIn() && isValidId(userId) && (
         isAdmin() || (
-          isOwner(userId) && 
+          isOwner(userId) &&
           isValidDealer(request.resource.data) &&
           request.resource.data.role == resource.data.role &&
           request.resource.data.status == resource.data.status &&
@@ -108,29 +112,19 @@ service cloud.firestore {
       allow delete: if isAdmin() && isValidId(userId);
     }
 
-    // --- Categories Collection ---
     match /categories/{categoryId} {
       allow read: if isSignedIn();
       allow create, update: if isAdmin() && isValidId(categoryId) && isValidCategory(request.resource.data);
       allow delete: if isAdmin() && isValidId(categoryId);
     }
 
-    // --- Products Collection ---
     match /products/{productId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data);
-      // Admin: full catalog edits. Dealer: reserve/refund stock during stock indent submit/cancel.
-      allow update: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data) ||
-        (
-          isSignedIn() && isValidId(productId) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['availableStock', 'stockStatus', 'status']) &&
-          (request.resource.data.availableStock is int || request.resource.data.availableStock is number) &&
-          request.resource.data.availableStock >= 0 &&
-          request.resource.data.status in ['Available', 'Out Of Stock']
-        );
+      // Stock changes only by admin (on fulfill / catalog edit) — dealers never write product docs directly.
+      allow update: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data);
     }
 
-    // --- Stock Requirements Collection ---
     match /requirements/{requirementId} {
       allow get: if isSignedIn() && isValidId(requirementId) && (
         resource.data.dealerId == request.auth.uid || isAdmin()
@@ -138,24 +132,24 @@ service cloud.firestore {
       allow list: if isSignedIn() && (
         resource.data.dealerId == request.auth.uid || isAdmin()
       );
-      
+
       allow create: if isSignedIn() && isValidId(requirementId) && (
         isAdmin() ||
         (
+          isApprovedDealer() &&
           isValidRequirement(request.resource.data) &&
           request.resource.data.dealerId == request.auth.uid &&
           request.resource.data.status == 'Pending'
         )
       );
 
-      // Updates:
-      // 1. Admin can change requirements or status.
-      // 2. Dealer can only change status to "Cancelled" on their own requirement, keeping critical fields intact.
       allow update: if isSignedIn() && isValidId(requirementId) && (
         isAdmin() || (
+          isApprovedDealer() &&
           resource.data.dealerId == request.auth.uid &&
           isValidRequirement(request.resource.data) &&
           request.resource.data.status == 'Cancelled' &&
+          resource.data.status == 'Pending' &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
         )
       );
@@ -163,12 +157,12 @@ service cloud.firestore {
       allow delete: if isAdmin() && isValidId(requirementId);
     }
 
-    // --- Notifications Collection ---
     match /notifications/{notificationId} {
       allow get, list: if isSignedIn() && isValidId(notificationId) && (
         resource.data.userId == request.auth.uid || isAdmin()
       );
-      allow create: if isSignedIn() && isValidId(notificationId);
+      allow create: if isSignedIn() && isValidId(notificationId) &&
+        request.resource.data.userId == request.auth.uid;
       allow update, delete: if isSignedIn() && isValidId(notificationId) && (
         resource.data.userId == request.auth.uid || isAdmin()
       );

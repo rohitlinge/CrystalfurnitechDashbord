@@ -1,24 +1,32 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
 import { DBService, ensureFirebaseConnection, auth, waitForAuthReady, getFirebaseSetupHint } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { DealerProfile } from './types';
 import Login from './components/Login';
-import Register from './components/Register';
-import AdminDashboard from './components/AdminDashboard';
-import DealerDashboard from './components/DealerDashboard';
+import Toast, { ToastMessage } from './components/Toast';
 import { Server } from 'lucide-react';
+
+const Register = lazy(() => import('./components/Register'));
+const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
+const DealerDashboard = lazy(() => import('./components/DealerDashboard'));
+
+function ScreenLoader() {
+  return (
+    <div className="grow flex items-center justify-center bg-[#0f0f0f]">
+      <div className="w-8 h-8 border-2 border-[#d4af37]/30 border-t-[#d4af37] rounded-full animate-spin" />
+    </div>
+  );
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<DealerProfile | null>(null);
   const [currentScreen, setCurrentScreen] = useState<'login' | 'register' | 'admin' | 'dealer'>('login');
-  const [networkChecked, setNetworkChecked] = useState(false);
   const [networkError, setNetworkError] = useState<string | null>(null);
-  const [firebaseConnected, setFirebaseConnected] = useState(false);
+  const [booting, setBooting] = useState(true);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
 
   const recheckFirebaseConnection = useCallback(async () => {
     const connected = await ensureFirebaseConnection(20000);
-    setFirebaseConnected(connected);
-    setNetworkChecked(true);
     if (connected) {
       setNetworkError(null);
     } else {
@@ -34,14 +42,37 @@ export default function App() {
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
-    waitForAuthReady().then(() => {
+    waitForAuthReady().then(async () => {
       const stored = DBService.getActiveUser();
-      if (stored) {
-        setCurrentUser(stored);
-        setCurrentScreen(stored.role === 'admin' ? 'admin' : 'dealer');
+      if (stored && auth.currentUser) {
+        try {
+          const fresh = await DBService.refreshUserProfile();
+          if (fresh) {
+            if (fresh.role === 'dealer' && fresh.status !== 'Approved') {
+              DBService.logout();
+              setCurrentUser(null);
+              setCurrentScreen('login');
+              setToast({ id: Date.now(), type: 'info', message: 'Your account is no longer approved. Please contact Crystal Furnitech.' });
+            } else {
+              setCurrentUser(fresh);
+              setCurrentScreen(fresh.role === 'admin' ? 'admin' : 'dealer');
+            }
+          } else {
+            DBService.logout();
+            setCurrentScreen('login');
+          }
+        } catch {
+          DBService.logout();
+          setCurrentScreen('login');
+        }
+      } else if (stored && !auth.currentUser) {
+        DBService.logout();
+        setCurrentScreen('login');
       } else {
         setCurrentScreen('login');
       }
+      setBooting(false);
+
       unsub = onAuthStateChanged(auth, (firebaseUser) => {
         const active = DBService.getActiveUser();
         if (!active) {
@@ -77,8 +108,14 @@ export default function App() {
     setCurrentScreen('login');
   };
 
+  if (booting) {
+    return <ScreenLoader />;
+  }
+
   return (
     <div className="min-h-screen bg-[#0f0f0f] text-white flex flex-col antialiased">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
+
       {networkError && (
         <div className="bg-[#b65200] text-white text-center py-2.5 px-4 font-semibold text-xs flex items-center justify-between gap-2 relative z-50">
           <div className="flex items-center gap-2 mx-auto">
@@ -99,25 +136,28 @@ export default function App() {
           <Login
             onLoginSuccess={handleLoginSuccess}
             onGoToRegister={() => setCurrentScreen('register')}
-            firebaseConnected={firebaseConnected}
-            networkChecked={networkChecked}
-            onRecheckConnection={recheckFirebaseConnection}
           />
         </div>
       )}
 
       {currentScreen === 'register' && (
-        <div className="grow flex flex-col items-center justify-center p-4 py-8 bg-[#0f0f0f]">
-          <Register onBackToLogin={() => setCurrentScreen('login')} />
-        </div>
+        <Suspense fallback={<ScreenLoader />}>
+          <div className="grow flex flex-col items-center justify-center p-4 py-8 bg-[#0f0f0f]">
+            <Register onBackToLogin={() => setCurrentScreen('login')} />
+          </div>
+        </Suspense>
       )}
 
       {currentScreen === 'admin' && currentUser && (
-        <AdminDashboard adminUser={currentUser} onLogout={handleLogout} />
+        <Suspense fallback={<ScreenLoader />}>
+          <AdminDashboard adminUser={currentUser} onLogout={handleLogout} />
+        </Suspense>
       )}
 
       {currentScreen === 'dealer' && currentUser && (
-        <DealerDashboard dealerUser={currentUser} onLogout={handleLogout} />
+        <Suspense fallback={<ScreenLoader />}>
+          <DealerDashboard dealerUser={currentUser} onLogout={handleLogout} />
+        </Suspense>
       )}
     </div>
   );

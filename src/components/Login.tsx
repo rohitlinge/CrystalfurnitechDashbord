@@ -7,16 +7,11 @@ import { Mail, Lock, LogIn, AlertTriangle, AlertOctagon } from 'lucide-react';
 interface LoginProps {
   onLoginSuccess: (user: DealerProfile) => void;
   onGoToRegister: () => void;
-  firebaseConnected?: boolean;
-  networkChecked?: boolean;
-  onRecheckConnection?: () => Promise<boolean>;
 }
 
 export default function Login({
   onLoginSuccess,
   onGoToRegister,
-  firebaseConnected = false,
-  networkChecked = false,
 }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -71,17 +66,6 @@ export default function Login({
       <div className="bg-[#222222] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
         <div className="h-1 bg-gradient-to-r from-[#b65200] via-[#d4af37] to-[#b65200]" />
         <div className="p-6 space-y-4">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-neutral-500">Firebase</span>
-            {!networkChecked ? (
-              <span className="text-neutral-400 animate-pulse">Checking...</span>
-            ) : (
-              <span className={firebaseConnected ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
-                {firebaseConnected ? 'Connected' : 'Unreachable'}
-              </span>
-            )}
-          </div>
-
           {statusMessage && (
             <div className={`p-3 rounded-lg border text-xs flex gap-2 ${
               statusMessage.type === 'pending' ? 'bg-[#b65200]/15 border-[#d4af37]/30 text-[#d4af37]' :

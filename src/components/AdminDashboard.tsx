@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import AdminAnalytics from './AdminAnalytics';
+import Toast, { ToastMessage } from './Toast';
 
 interface AdminDashboardProps {
   adminUser: DealerProfile;
@@ -15,6 +16,10 @@ interface AdminDashboardProps {
 }
 
 export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardProps) {
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const showToast = (message: string, type: ToastMessage['type'] = 'error') =>
+    setToast({ id: Date.now(), message, type });
+
   const [dealers, setDealers] = useState<DealerProfile[]>([]);
   const [requirements, setRequirements] = useState<StockRequirement[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
@@ -240,10 +245,21 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   };
 
   const handleUpdateRequirementStatus = async (reqId: string, nextStatus: 'Fulfilled' | 'Cancelled') => {
+    const reqBefore = requirements.find((r) => r.id === reqId);
     try {
       await DBService.updateStockRequirementStatus(reqId, nextStatus);
+      const [allProds] = await Promise.all([
+        DBService.getProducts(),
+      ]);
+      const productAfter = reqBefore ? allProds.find((p) => p.id === reqBefore.productId) : undefined;
+      // #region agent log
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:success',message:'fulfill completed and products re-fetched',data:{reqId,nextStatus,productId:reqBefore?.productId,quantityRequested:reqBefore?.quantityRequested,productStockAfter:productAfter?.availableStock,productName:productAfter?.name},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
       await fetchData();
     } catch (e) {
+      // #region agent log
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:error',message:'fulfill handler caught error',data:{reqId,nextStatus,error:e instanceof Error?e.message:String(e)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
       console.error(e);
     }
   };
@@ -260,7 +276,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
           await fetchData();
         } catch (e) {
           console.error(e);
-          alert("Failed to delete stock requirement.");
+          showToast('Failed to delete stock requirement.');
         }
       }
     });
@@ -391,7 +407,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     if (!productModal) return;
 
     if (productModal.images.length === 0) {
-      alert("Please provide or upload at least one product image.");
+      showToast('Please provide or upload at least one product image.', 'info');
       return;
     }
 
@@ -479,7 +495,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       } : null);
     } catch (err) {
       console.error("Image upload failed", err);
-      alert("Failed to upload image. Please try again.");
+      showToast('Failed to upload image. Please try again.');
     } finally {
       setUploadingImages(false);
     }
@@ -495,7 +511,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       setProductModal(prev => prev ? { ...prev, designSheetUrl: url } : null);
     } catch (err) {
       console.error(err);
-      alert("Failed to upload design sheet.");
+      showToast('Failed to upload design sheet.');
     } finally {
       setUploadingSheet(false);
     }
@@ -511,7 +527,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       setProductModal(prev => prev ? { ...prev, brochureUrl: url } : null);
     } catch (err) {
       console.error(err);
-      alert("Failed to upload brochure.");
+      showToast('Failed to upload brochure.');
     } finally {
       setUploadingBrochure(false);
     }
@@ -547,7 +563,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   );
 
   const navItems = [
-    { id: 'analytics' as const, label: 'Analytics', icon: BarChart3, count: requirements.filter(r => r.status === 'Pending').length },
+    { id: 'analytics' as const, label: 'Analytics', icon: BarChart3, count: null as number | null },
     { id: 'dealers' as const, label: 'Dealers', icon: Users, count: dealers.length },
     { id: 'requirements' as const, label: 'Stock Requests', icon: ClipboardList, count: requirements.length },
     { id: 'categories' as const, label: 'Categories', icon: Layers, count: categories.length },
@@ -564,6 +580,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
   return (
     <div className="cf-admin min-h-screen flex text-white">
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       <aside className="cf-admin-sidebar hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen border-r border-white/10">
         <div className="p-5 border-b border-white/10">
           <BrandLogo variant="light" size="md" subtitle="Admin Console" />
@@ -585,9 +602,11 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 <Icon className="w-4 h-4" />
                 {label}
               </span>
+              {count != null && (
               <span className={`text-xs px-1.5 py-0.5 rounded-md ${activeTab === id ? 'bg-[#222222]/20' : 'bg-[#222222]/10'}`}>
                 {count}
               </span>
+              )}
             </button>
           ))}
         </nav>
@@ -643,7 +662,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 }`}
               >
                 <Icon className="w-4 h-4" />
-                {label} ({count})
+                {label}{count != null ? ` (${count})` : ''}
               </button>
             ))}
           </div>
@@ -1122,7 +1141,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
                         {/* Description */}
                         <td className="py-4 px-5 max-w-xs whitespace-normal text-zinc-300 font-sans">
-                          {cat.description || <span className="text-zinc-650 italic">No description provided</span>}
+                          {cat.description || <span className="text-zinc-500 italic">No description provided</span>}
                         </td>
 
                         {/* Date Created */}
@@ -1156,7 +1175,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               className={`p-1.5 border border-white/10 rounded-lg cursor-pointer transition ${
                                 cat.isActive 
                                   ? 'hover:bg-yellow-500/20 text-yellow-500 hover:text-yellow-400' 
-                                  : 'hover:bg-[#10b981]/20 text-zinc-450 hover:text-[#10b981]'
+                                  : 'hover:bg-[#10b981]/20 text-zinc-400 hover:text-[#10b981]'
                               }`}
                             >
                               {cat.isActive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1168,7 +1187,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               type="button"
                               title="Edit Category Details"
                               onClick={() => handleOpenEditCategory(cat)}
-                              className="p-1.5 bg-transparent hover:bg-zinc-850 hover:text-white text-white border border-white/10 rounded-lg cursor-pointer transition duration-200"
+                              className="p-1.5 bg-transparent hover:bg-zinc-800 hover:text-white text-white border border-white/10 rounded-lg cursor-pointer transition duration-200"
                             >
                               <Edit className="w-4 h-4" />
                             </button>
@@ -1276,7 +1295,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               }`}>
                                 {p.status === 'Out Of Stock' || p.availableStock === 0 ? 'Out of Stock' : 'In Stock'}
                               </span>
-                              <span className="text-[10px] text-zinc-450 block mt-1 font-semibold">{p.availableStock} items in shop</span>
+                              <span className="text-[10px] text-zinc-400 block mt-1 font-semibold">{p.availableStock} items in shop</span>
                             </div>
                           </td>
 
@@ -1300,7 +1319,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 className={`p-1.5 border border-white/10 rounded-lg cursor-pointer transition ${
                                   p.isActive !== false 
                                     ? 'hover:bg-yellow-500/20 text-yellow-500 hover:text-yellow-400' 
-                                    : 'hover:bg-[#10b981]/20 text-zinc-450 hover:text-[#10b981]'
+                                    : 'hover:bg-[#10b981]/20 text-zinc-400 hover:text-[#10b981]'
                                 }`}
                               >
                                 {p.isActive !== false ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1312,7 +1331,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title="Edit Catalog Attributes"
                                 onClick={() => handleOpenEditProduct(p)}
-                                className="p-1.5 bg-transparent hover:bg-zinc-850 hover:text-white text-white border border-white/10 rounded-lg cursor-pointer transition duration-200"
+                                className="p-1.5 bg-transparent hover:bg-zinc-800 hover:text-white text-white border border-white/10 rounded-lg cursor-pointer transition duration-200"
                               >
                                 <Edit className="w-4 h-4" />
                               </button>
