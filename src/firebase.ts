@@ -883,6 +883,64 @@ const setStorageItem = <T>(key: string, value: T): void => {
 };
 
 // Core DB & Auth Service Class
+async function updateStockRequirementStatusViaRest(
+  id: string,
+  status: 'Pending' | 'Fulfilled' | 'Cancelled',
+  idToken: string
+): Promise<void> {
+  const reqData = await withTimeout(
+    getDocumentRest<StockRequirement>('requirements', id, idToken),
+    FIRESTORE_READ_TIMEOUT_MS,
+    'Reading stock requirement timed out.'
+  );
+
+  if (!reqData) {
+    throw new Error('Requirement does not exist.');
+  }
+
+  const oldStatus = reqData.status;
+  if (oldStatus === status) return;
+
+  if (oldStatus === 'Pending' && status === 'Fulfilled') {
+    const productData = await withTimeout(
+      getDocumentRest<ProductItem>('products', reqData.productId, idToken),
+      FIRESTORE_READ_TIMEOUT_MS,
+      'Reading product for fulfill timed out.'
+    );
+
+    if (!productData) {
+      throw new Error('Product does not exist.');
+    }
+
+    const currentStock = productData.availableStock || 0;
+    if (currentStock < reqData.quantityRequested) {
+      throw new Error(
+        `Insufficient stock to fulfill. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
+      );
+    }
+
+    const nextStock = currentStock - reqData.quantityRequested;
+    const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+    const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
+
+    await withTimeout(
+      patchDocumentRest('products', reqData.productId, {
+        availableStock: nextStock,
+        stockStatus,
+        status: prodStatus,
+      }, idToken),
+      15000,
+      'Failed to update product stock.'
+    );
+  }
+
+  await withTimeout(
+    patchDocumentRest('requirements', id, { status }, idToken),
+    15000,
+    'Failed to update stock requirement status.'
+  );
+}
+
 export class DBService {
   // --- Seed Database to Firestore ---
   static async seedFirestore(): Promise<void> {
@@ -1502,72 +1560,74 @@ export class DBService {
       await ensureAuthenticated();
     }
 
+    const idToken = await auth.currentUser!.getIdToken(true);
+
     try {
-      await runTransaction(db, async (transaction) => {
-        const reqRef = doc(db, 'requirements', id);
-        const reqDoc = await transaction.get(reqRef);
+      await updateStockRequirementStatusViaRest(id, status, idToken);
+      // #region agent log
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'REST fulfill committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+    } catch (restError) {
+      // #region agent log
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:restFailed',message:'REST fulfill failed, trying SDK transaction',data:{reqId:id,targetStatus:status,error:restError instanceof Error?restError.message:String(restError)},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
+      // #endregion
+      try {
+        await withTimeout(
+          runTransaction(db, async (transaction) => {
+            const reqRef = doc(db, 'requirements', id);
+            const reqDoc = await transaction.get(reqRef);
 
-        if (!reqDoc.exists()) {
-          throw new Error('Requirement does not exist.');
-        }
+            if (!reqDoc.exists()) {
+              throw new Error('Requirement does not exist.');
+            }
 
-        const reqData = reqDoc.data() as StockRequirement;
-        const oldStatus = reqData.status;
+            const reqData = reqDoc.data() as StockRequirement;
+            const oldStatus = reqData.status;
 
+            if (oldStatus === status) return;
+
+            transaction.update(reqRef, { status });
+
+            if (oldStatus === 'Pending' && status === 'Fulfilled') {
+              const productRef = doc(db, 'products', reqData.productId);
+              const productDoc = await transaction.get(productRef);
+
+              if (!productDoc.exists()) {
+                throw new Error('Product does not exist.');
+              }
+
+              const productData = productDoc.data() as ProductItem;
+              const currentStock = productData.availableStock || 0;
+
+              if (currentStock < reqData.quantityRequested) {
+                throw new Error(
+                  `Insufficient stock to fulfill. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
+                );
+              }
+
+              const nextStock = currentStock - reqData.quantityRequested;
+              const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+              const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
+
+              transaction.update(productRef, {
+                availableStock: nextStock,
+                stockStatus,
+                status: prodStatus,
+              });
+            }
+          }),
+          20000,
+          'Stock fulfillment timed out. Please check your connection and try again.'
+        );
         // #region agent log
-        fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:reqRead',message:'requirement loaded in transaction',data:{reqId:id,oldStatus,targetStatus:status,productId:reqData.productId,quantityRequested:reqData.quantityRequested,qtyType:typeof reqData.quantityRequested,willEarlyReturn:oldStatus===status,willDecrementStock:oldStatus==='Pending'&&status==='Fulfilled'},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+        fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'SDK transaction committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
         // #endregion
-
-        if (oldStatus === status) return;
-
-        transaction.update(reqRef, { status });
-
-        if (oldStatus === 'Pending' && status === 'Fulfilled') {
-          const productRef = doc(db, 'products', reqData.productId);
-          const productDoc = await transaction.get(productRef);
-
-          if (!productDoc.exists()) {
-            // #region agent log
-            fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:productMissing',message:'product doc not found for fulfill',data:{productId:reqData.productId},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-            // #endregion
-            throw new Error('Product does not exist.');
-          }
-
-          const productData = productDoc.data() as ProductItem;
-          const currentStock = productData.availableStock || 0;
-
-          if (currentStock < reqData.quantityRequested) {
-            // #region agent log
-            fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:insufficientStock',message:'insufficient stock to fulfill',data:{productId:reqData.productId,currentStock,quantityRequested:reqData.quantityRequested},timestamp:Date.now(),hypothesisId:'D'})}).catch(()=>{});
-            // #endregion
-            throw new Error(
-              `Insufficient stock to fulfill. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
-            );
-          }
-
-          const nextStock = currentStock - reqData.quantityRequested;
-          const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-          const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
-
-          // #region agent log
-          fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:stockDecrement',message:'applying stock decrement in transaction',data:{productId:reqData.productId,productName:productData.name,currentStock,quantityRequested:reqData.quantityRequested,nextStock,stockStatus,prodStatus,priceType:typeof productData.price},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-          // #endregion
-
-          transaction.update(productRef, {
-            availableStock: nextStock,
-            stockStatus,
-            status: prodStatus,
-          });
-        }
-      });
-      // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'transaction committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-    } catch (error: unknown) {
-      // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:error',message:'transaction failed',data:{reqId:id,targetStatus:status,error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      throw error;
+      } catch (error: unknown) {
+        // #region agent log
+        fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:error',message:'fulfill failed',data:{reqId:id,targetStatus:status,error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+        // #endregion
+        throw new Error(formatFirebaseError(error, 'Failed to update stock requirement.'));
+      }
     }
   }
 

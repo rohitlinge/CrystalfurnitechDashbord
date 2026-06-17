@@ -26,6 +26,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [activeTab, setActiveTab] = useState<'analytics' | 'dealers' | 'requirements' | 'categories' | 'products'>('analytics');
   const [loading, setLoading] = useState(false);
+  const [fulfillingReqId, setFulfillingReqId] = useState<string | null>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [uploadingSheet, setUploadingSheet] = useState(false);
   const [uploadingBrochure, setUploadingBrochure] = useState(false);
@@ -246,6 +247,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
   const handleUpdateRequirementStatus = async (reqId: string, nextStatus: 'Fulfilled' | 'Cancelled') => {
     const reqBefore = requirements.find((r) => r.id === reqId);
+    // #region agent log
+    fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:click',message:'fulfill button clicked',data:{reqId,nextStatus},timestamp:Date.now(),hypothesisId:'J'})}).catch(()=>{});
+    // #endregion
+    setFulfillingReqId(reqId);
     try {
       await DBService.updateStockRequirementStatus(reqId, nextStatus);
       const [allProds] = await Promise.all([
@@ -256,11 +261,21 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:success',message:'fulfill completed and products re-fetched',data:{reqId,nextStatus,productId:reqBefore?.productId,quantityRequested:reqBefore?.quantityRequested,productStockAfter:productAfter?.availableStock,productName:productAfter?.name},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
       // #endregion
       await fetchData();
+      showToast(
+        nextStatus === 'Fulfilled'
+          ? `Request fulfilled. Stock updated to ${productAfter?.availableStock ?? '—'} units.`
+          : 'Stock request cancelled.',
+        'info'
+      );
     } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to update stock request.';
       // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:error',message:'fulfill handler caught error',data:{reqId,nextStatus,error:e instanceof Error?e.message:String(e)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:error',message:'fulfill handler caught error',data:{reqId,nextStatus,error:msg},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
       // #endregion
       console.error(e);
+      showToast(msg);
+    } finally {
+      setFulfillingReqId(null);
     }
   };
 
@@ -1066,16 +1081,18 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 <button
                                   id={`btn-fulfill-${rq.id}`}
                                   type="button"
+                                  disabled={fulfillingReqId === rq.id}
                                   onClick={() => handleUpdateRequirementStatus(rq.id, 'Fulfilled')}
-                                  className="py-1 px-2.5 bg-transparent hover:bg-[#10b981]/20 hover:text-[#10b981] border border-white/10 text-white font-semibold text-[10px] rounded-lg transition"
+                                  className="py-1 px-2.5 bg-transparent hover:bg-[#10b981]/20 hover:text-[#10b981] border border-white/10 text-white font-semibold text-[10px] rounded-lg transition disabled:opacity-50"
                                 >
-                                  Fulfill Request
+                                  {fulfillingReqId === rq.id ? 'Processing...' : 'Fulfill Request'}
                                 </button>
                                 <button
                                   id={`btn-cancel-${rq.id}`}
                                   type="button"
+                                  disabled={fulfillingReqId === rq.id}
                                   onClick={() => handleUpdateRequirementStatus(rq.id, 'Cancelled')}
-                                  className="py-1 px-2.5 bg-transparent hover:bg-[#ef4444]/20 hover:text-[#ef4444] border border-white/10 text-[#ef4444] font-semibold text-[10px] rounded-lg transition"
+                                  className="py-1 px-2.5 bg-transparent hover:bg-[#ef4444]/20 hover:text-[#ef4444] border border-white/10 text-[#ef4444] font-semibold text-[10px] rounded-lg transition disabled:opacity-50"
                                 >
                                   Reject/Cancel
                                 </button>
