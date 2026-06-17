@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { DBService } from '../firebase';
-import { DealerProfile, DealerStatus, StockRequirement, CategoryItem, ProductItem } from '../types';
+import { DealerProfile, DealerStatus, StockRequirement, CategoryItem, ProductItem, LedgerEntry } from '../types';
+import { getDealerCreditInfo, formatINR, DEFAULT_CREDIT_LIMIT, DEFAULT_CREDIT_DAYS } from '../credit';
 import { 
   Users, ClipboardList, CheckCircle, Ban, Hourglass, Trash2, 
   Search, RefreshCw, LogOut, ChevronRight, X, AlertTriangle, Info, ShieldCheck, Landmark,
-  Layers, Package, Edit, Plus, Eye, EyeOff, Upload, Image as ImageIcon, BarChart3
+  Layers, Package, Edit, Plus, Eye, EyeOff, Upload, Image as ImageIcon, BarChart3, BookOpen
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import AdminAnalytics from './AdminAnalytics';
 import Toast, { ToastMessage } from './Toast';
+import DealerLedger from './DealerLedger';
 
 interface AdminDashboardProps {
   adminUser: DealerProfile;
@@ -63,7 +65,26 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     state: string;
     address: string;
     password: string;
+    creditLimit: number;
+    creditDays: number;
   } | null>(null);
+
+  const [creditModal, setCreditModal] = useState<{
+    uid: string;
+    companyName: string;
+    creditLimit: number;
+    outstandingBalance: number;
+    creditDays: number;
+  } | null>(null);
+  const [savingCredit, setSavingCredit] = useState(false);
+  const [creditModalLedger, setCreditModalLedger] = useState<LedgerEntry[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNote, setPaymentNote] = useState('');
+  const [creditNoteAmount, setCreditNoteAmount] = useState('');
+  const [creditNoteNote, setCreditNoteNote] = useState('');
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [recordingCreditNote, setRecordingCreditNote] = useState(false);
 
   // Product management modals state
   const [productModal, setProductModal] = useState<{
@@ -181,8 +202,126 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       city: '',
       state: 'Maharashtra',
       address: '',
-      password: ''
+      password: '',
+      creditLimit: DEFAULT_CREDIT_LIMIT,
+      creditDays: DEFAULT_CREDIT_DAYS,
     });
+  };
+
+  const handleOpenCreditModal = async (dealer: DealerProfile) => {
+    const credit = getDealerCreditInfo(dealer);
+    setPaymentAmount('');
+    setPaymentNote('');
+    setCreditNoteAmount('');
+    setCreditNoteNote('');
+    setCreditModal({
+      uid: dealer.uid,
+      companyName: dealer.companyName,
+      creditLimit: credit.creditLimit,
+      outstandingBalance: credit.outstandingBalance,
+      creditDays: credit.creditDays,
+    });
+    setLedgerLoading(true);
+    try {
+      const entries = await DBService.getDealerLedger(dealer.uid);
+      setCreditModalLedger(entries);
+    } catch {
+      setCreditModalLedger([]);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const refreshCreditModalLedger = async (dealerId: string) => {
+    setLedgerLoading(true);
+    try {
+      const entries = await DBService.getDealerLedger(dealerId);
+      setCreditModalLedger(entries);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const handleRecordPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!creditModal) return;
+    const amount = parseInt(paymentAmount, 10);
+    if (!amount || amount <= 0) {
+      showToast('Enter a valid payment amount.', 'info');
+      return;
+    }
+    setRecordingPayment(true);
+    try {
+      await DBService.recordDealerPayment(creditModal.uid, amount, paymentNote);
+      setPaymentAmount('');
+      setPaymentNote('');
+      const dealer = dealers.find((d) => d.uid === creditModal.uid);
+      if (dealer) {
+        const credit = getDealerCreditInfo({
+          ...dealer,
+          outstandingBalance: Math.max(0, (dealer.outstandingBalance ?? 0) - amount),
+        });
+        setCreditModal((prev) => prev ? { ...prev, outstandingBalance: credit.outstandingBalance } : null);
+      }
+      await refreshCreditModalLedger(creditModal.uid);
+      await fetchData();
+      showToast('Payment recorded in ledger.', 'info');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to record payment.');
+    } finally {
+      setRecordingPayment(false);
+    }
+  };
+
+  const handleRecordCreditNote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!creditModal) return;
+    const amount = parseInt(creditNoteAmount, 10);
+    if (!amount || amount <= 0) {
+      showToast('Enter a valid credit note amount.', 'info');
+      return;
+    }
+    setRecordingCreditNote(true);
+    try {
+      await DBService.recordDealerCreditNote(creditModal.uid, amount, creditNoteNote);
+      setCreditNoteAmount('');
+      setCreditNoteNote('');
+      const dealer = dealers.find((d) => d.uid === creditModal.uid);
+      if (dealer) {
+        const credit = getDealerCreditInfo({
+          ...dealer,
+          outstandingBalance: Math.max(0, (dealer.outstandingBalance ?? 0) - amount),
+        });
+        setCreditModal((prev) => prev ? { ...prev, outstandingBalance: credit.outstandingBalance } : null);
+      }
+      await refreshCreditModalLedger(creditModal.uid);
+      await fetchData();
+      showToast('Credit note recorded in ledger.', 'info');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to record credit note.');
+    } finally {
+      setRecordingCreditNote(false);
+    }
+  };
+
+  const handleSaveCredit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!creditModal) return;
+    setSavingCredit(true);
+    try {
+      await DBService.updateDealerCredit(creditModal.uid, {
+        creditLimit: creditModal.creditLimit,
+        outstandingBalance: creditModal.outstandingBalance,
+        creditDays: creditModal.creditDays,
+      });
+      await refreshCreditModalLedger(creditModal.uid);
+      await fetchData();
+      showToast('Dealer credit settings updated.', 'info');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update credit.');
+    } finally {
+      setSavingCredit(false);
+    }
   };
 
   const handleSaveDealer = async (e: React.FormEvent) => {
@@ -211,7 +350,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
         city: dealerModal.city || 'N/A',
         state: dealerModal.state,
         address: dealerModal.address || 'N/A',
-        password: dealerModal.password
+        password: dealerModal.password,
+        creditLimit: dealerModal.creditLimit,
+        creditDays: dealerModal.creditDays,
       });
       setDealerModal(null);
       await fetchData();
@@ -247,20 +388,14 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
   const handleUpdateRequirementStatus = async (reqId: string, nextStatus: 'Fulfilled' | 'Cancelled') => {
     const reqBefore = requirements.find((r) => r.id === reqId);
-    // #region agent log
-    fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:click',message:'fulfill button clicked',data:{reqId,nextStatus},timestamp:Date.now(),hypothesisId:'J'})}).catch(()=>{});
-    // #endregion
-    setFulfillingReqId(reqId);
+setFulfillingReqId(reqId);
     try {
       await DBService.updateStockRequirementStatus(reqId, nextStatus);
       const [allProds] = await Promise.all([
         DBService.getProducts(),
       ]);
       const productAfter = reqBefore ? allProds.find((p) => p.id === reqBefore.productId) : undefined;
-      // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:success',message:'fulfill completed and products re-fetched',data:{reqId,nextStatus,productId:reqBefore?.productId,quantityRequested:reqBefore?.quantityRequested,productStockAfter:productAfter?.availableStock,productName:productAfter?.name},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
-      await fetchData();
+await fetchData();
       showToast(
         nextStatus === 'Fulfilled'
           ? `Request fulfilled. Stock updated to ${productAfter?.availableStock ?? '—'} units.`
@@ -269,10 +404,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to update stock request.';
-      // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'AdminDashboard.tsx:handleUpdateRequirementStatus:error',message:'fulfill handler caught error',data:{reqId,nextStatus,error:msg},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      console.error(e);
+console.error(e);
       showToast(msg);
     } finally {
       setFulfillingReqId(null);
@@ -549,32 +681,24 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   };
 
   // Filter lists based on search
-  const filteredDealers = dealers.filter(d => 
-    d.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.ownerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.gstNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    d.state.toLowerCase().includes(searchTerm.toLowerCase())
+  const searchQ = (searchTerm || '').toLowerCase();
+  const matchesSearch = (...values: (string | undefined)[]) =>
+    values.some((v) => (v || '').toLowerCase().includes(searchQ));
+
+  const filteredDealers = dealers.filter((d) =>
+    matchesSearch(d.companyName, d.ownerName, d.email, d.gstNumber, d.city, d.state)
   );
 
-  const filteredRequirements = requirements.filter(r => 
-    r.dealerCompanyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.status.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredRequirements = requirements.filter((r) =>
+    matchesSearch(r.dealerCompanyName, r.productName, r.status)
   );
 
-  const filteredCategories = categories.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (c.description || '').toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredCategories = categories.filter((c) =>
+    matchesSearch(c.name, c.description)
   );
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.description || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (p.material || '').toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredProducts = products.filter((p) =>
+    matchesSearch(p.name, p.sku, p.category, p.description, p.material)
   );
 
   const navItems = [
@@ -840,6 +964,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     <th className="py-4 px-5">GST Identification</th>
                     <th className="py-4 px-5">City & State</th>
                     <th className="py-4 px-5">Registered On</th>
+                    <th className="py-4 px-5">Credit</th>
                     <th className="py-4 px-5">Status</th>
                     <th className="py-4 px-5 text-right">Backoffice Actions</th>
                   </tr>
@@ -847,7 +972,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 <tbody className="divide-y divide-white/10 text-neutral-500">
                    {filteredDealers.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-neutral-500 font-semibold">
+                      <td colSpan={8} className="py-12 text-center text-neutral-500 font-semibold">
                         <Users className="w-10 h-10 mx-auto text-[#27272a] mb-2" />
                         No dealer accounts match the search criteria.
                       </td>
@@ -892,6 +1017,20 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                             month: 'short',
                             year: 'numeric'
                           })}
+                        </td>
+
+                        {/* Credit summary */}
+                        <td className="py-4 px-5">
+                          {(() => {
+                            const credit = getDealerCreditInfo(dl);
+                            return (
+                              <div className="text-[10px] space-y-0.5">
+                                <span className="block text-zinc-300">Avail: <strong className="text-[#d4af37]">{formatINR(credit.availableCredit)}</strong></span>
+                                <span className="block text-neutral-500">Out: {formatINR(credit.outstandingBalance)} / {formatINR(credit.creditLimit)}</span>
+                                <span className="block text-neutral-500">{credit.creditDays} days</span>
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Status badge, showing warnings if has custom reason values */}
@@ -953,6 +1092,18 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                             )}
 
                             {/* Suspend action */}
+                            {dl.status === 'Approved' && (
+                              <button
+                                id={`btn-credit-${dl.uid}`}
+                                type="button"
+                                title="Edit Credit Limit"
+                                onClick={() => handleOpenCreditModal(dl)}
+                                className="p-1.5 bg-transparent hover:bg-[#d4af37]/20 hover:text-[#d4af37] text-[#d4af37] border border-white/10 rounded-lg cursor-pointer transition duration-200"
+                              >
+                                <Landmark className="w-4 h-4" />
+                              </button>
+                            )}
+
                             {dl.status === 'Approved' && (
                               <button
                                 id={`btn-suspend-${dl.uid}`}
@@ -1643,6 +1794,30 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   />
                 </div>
 
+                {/* Credit Limit */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Credit Limit (₹)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={dealerModal.creditLimit}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, creditLimit: Math.max(0, parseInt(e.target.value) || 0) } : null)}
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
+                  />
+                </div>
+
+                {/* Credit Days */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Credit Days</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={dealerModal.creditDays}
+                    onChange={(e) => setDealerModal(prev => prev ? { ...prev, creditDays: Math.max(0, parseInt(e.target.value) || 0) } : null)}
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
+                  />
+                </div>
+
                 {/* Password */}
                 <div className="space-y-1.5">
                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Log-in Password *</label>
@@ -1692,6 +1867,122 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
             </form>
 
+          </div>
+        </div>
+      )}
+
+      {creditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-[#222222] border border-white/10 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-xl my-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Landmark className="w-5 h-5 text-[#d4af37]" />
+                Dealer Credit & Ledger
+              </h3>
+              <button type="button" onClick={() => setCreditModal(null)} className="text-neutral-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-neutral-400">{creditModal.companyName}</p>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <form onSubmit={handleSaveCredit} className="space-y-3">
+                <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Credit Settings</p>
+                <div>
+                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Credit Limit (₹)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={creditModal.creditLimit}
+                    onChange={(e) => setCreditModal(prev => prev ? { ...prev, creditLimit: Math.max(0, parseInt(e.target.value) || 0) } : null)}
+                    className="cf-input w-full mt-1 px-3 py-2.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Outstanding Balance (₹)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={creditModal.outstandingBalance}
+                    onChange={(e) => setCreditModal(prev => prev ? { ...prev, outstandingBalance: Math.max(0, parseInt(e.target.value) || 0) } : null)}
+                    className="cf-input w-full mt-1 px-3 py-2.5 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Credit Days</label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={creditModal.creditDays}
+                    onChange={(e) => setCreditModal(prev => prev ? { ...prev, creditDays: Math.max(0, parseInt(e.target.value) || 0) } : null)}
+                    className="cf-input w-full mt-1 px-3 py-2.5 text-sm"
+                  />
+                </div>
+                <div className="bg-[#171717] border border-white/10 rounded-lg p-3 text-xs space-y-1">
+                  <div className="flex justify-between"><span className="text-neutral-500">Available Credit</span><span className="text-[#d4af37] font-bold">{formatINR(Math.max(0, creditModal.creditLimit - creditModal.outstandingBalance))}</span></div>
+                  <div className="flex justify-between"><span className="text-neutral-500">Used Credit</span><span className="text-white">{formatINR(creditModal.outstandingBalance)}</span></div>
+                </div>
+                <button type="submit" disabled={savingCredit} className="w-full cf-btn-brand py-3 rounded-xl text-sm">
+                  {savingCredit ? 'Saving...' : 'Save Credit Settings'}
+                </button>
+              </form>
+
+              <div className="space-y-3">
+                <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Record Transaction</p>
+                <form onSubmit={handleRecordPayment} className="bg-[#171717] border border-white/10 rounded-lg p-3 space-y-2">
+                  <p className="text-xs font-semibold text-green-400">Payment Received</p>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="Amount (₹)"
+                    value={paymentAmount}
+                    onChange={(e) => setPaymentAmount(e.target.value)}
+                    className="cf-input w-full px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Note (optional)"
+                    value={paymentNote}
+                    onChange={(e) => setPaymentNote(e.target.value)}
+                    className="cf-input w-full px-3 py-2 text-sm"
+                  />
+                  <button type="submit" disabled={recordingPayment} className="w-full py-2 text-xs font-semibold rounded-lg border border-green-500/30 text-green-400 hover:bg-green-500/10">
+                    {recordingPayment ? 'Recording...' : 'Record Payment'}
+                  </button>
+                </form>
+                <form onSubmit={handleRecordCreditNote} className="bg-[#171717] border border-white/10 rounded-lg p-3 space-y-2">
+                  <p className="text-xs font-semibold text-[#d4af37]">Credit Note</p>
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="Amount (₹)"
+                    value={creditNoteAmount}
+                    onChange={(e) => setCreditNoteAmount(e.target.value)}
+                    className="cf-input w-full px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Note (optional)"
+                    value={creditNoteNote}
+                    onChange={(e) => setCreditNoteNote(e.target.value)}
+                    className="cf-input w-full px-3 py-2 text-sm"
+                  />
+                  <button type="submit" disabled={recordingCreditNote} className="w-full py-2 text-xs font-semibold rounded-lg border border-[#d4af37]/30 text-[#d4af37] hover:bg-[#d4af37]/10">
+                    {recordingCreditNote ? 'Recording...' : 'Record Credit Note'}
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <div className="border-t border-white/10 pt-4">
+              <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5" /> Wallet Ledger
+              </p>
+              <DealerLedger entries={creditModalLedger} loading={ledgerLoading} />
+            </div>
           </div>
         </div>
       )}

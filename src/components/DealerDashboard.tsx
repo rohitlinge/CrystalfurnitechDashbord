@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { DBService } from '../firebase';
-import { DealerProfile, ProductItem, StockRequirement, CategoryItem } from '../types';
+import { DealerProfile, ProductItem, StockRequirement, CategoryItem, LedgerEntry } from '../types';
+import { getDealerCreditInfo, formatINR } from '../credit';
+import DealerLedger from './DealerLedger';
 import BrandLogo from './BrandLogo';
 import Toast, { ToastMessage } from './Toast';
 import {
   Search, LogOut, Package2, ClipboardList, User, ShoppingCart, RefreshCw,
-  CheckCircle, X, FileText, Download, AlertTriangle
+  CheckCircle, X, FileText, Download, AlertTriangle, Landmark, BookOpen
 } from 'lucide-react';
 
 interface DealerDashboardProps {
@@ -13,9 +15,10 @@ interface DealerDashboardProps {
   onLogout: () => void;
 }
 
-type MobileTab = 'catalog' | 'orders' | 'account';
+type MobileTab = 'catalog' | 'orders' | 'wallet' | 'account';
 
 export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboardProps) {
+  const [profile, setProfile] = useState(dealerUser);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const showToast = (message: string, type: ToastMessage['type'] = 'error') =>
     setToast({ id: Date.now(), message, type });
@@ -23,6 +26,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [myRequirements, setMyRequirements] = useState<StockRequirement[]>([]);
+  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
@@ -45,6 +49,9 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
   const fetchData = async () => {
     setLoading(true);
     try {
+      const refreshed = await DBService.refreshUserProfile();
+      if (refreshed) setProfile(refreshed);
+
       const [catList, prodList, reqList] = await Promise.all([
         DBService.getCategories(),
         DBService.getProducts(),
@@ -53,16 +60,39 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
       setCategories(catList);
       setProducts(prodList);
       setMyRequirements(reqList);
+
+      try {
+        const ledgerList = await DBService.getDealerLedger(dealerUser.uid);
+        setLedgerEntries(ledgerList);
+      } catch (ledgerErr) {
+        setLedgerEntries([]);
+        const ledgerMsg = ledgerErr instanceof Error ? ledgerErr.message : 'Failed to load wallet ledger.';
+        console.error(ledgerErr);
+if (mobileTab === 'wallet') {
+          showToast(ledgerMsg);
+        }
+      }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to load dashboard data.';
       console.error(e);
+showToast(msg);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    setProfile(dealerUser);
+  }, [dealerUser]);
+
+  useEffect(() => {
     fetchData();
   }, [dealerUser.uid]);
+
+  const credit = getDealerCreditInfo(profile);
+  const selectedUnitPrice = selectedProduct ? (selectedProduct.wholesalePrice || selectedProduct.price) : 0;
+  const selectedOrderValue = selectedUnitPrice * requestQty;
+  const exceedsCredit = selectedProduct ? selectedOrderValue > credit.availableCredit : false;
 
   const handleSubmitRequirement = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,6 +103,10 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
     }
     if (requestQty > selectedProduct.availableStock) {
       showToast(`Only ${selectedProduct.availableStock} units available.`, 'info');
+      return;
+    }
+    if (selectedOrderValue > credit.availableCredit) {
+      showToast('Order cannot be placed', 'error');
       return;
     }
 
@@ -116,16 +150,18 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
     });
   };
 
-  const activeCategoryNames = categories.filter((c) => c.isActive !== false).map((c) => c.name);
+  const activeCategoryNames = [...new Set(categories.filter((c) => c.isActive !== false).map((c) => c.name))];
   const activeProducts = products.filter((p) => p.isActive !== false);
   const categoryFilterOptions =
-    activeCategoryNames.length > 0 ? activeCategoryNames : [...new Set(activeProducts.map((p) => p.category))];
+    activeCategoryNames.length > 0 ? activeCategoryNames : [...new Set(activeProducts.map((p) => p.category).filter(Boolean))];
   const categoryTabs = ['All', ...categoryFilterOptions];
 
   const filteredProducts = activeProducts.filter((p) => {
-    const q = searchTerm.toLowerCase();
+    const q = (searchTerm || '').toLowerCase();
     const matchesSearch =
-      p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.material.toLowerCase().includes(q);
+      (p.name || '').toLowerCase().includes(q) ||
+      (p.sku || '').toLowerCase().includes(q) ||
+      (p.material || '').toLowerCase().includes(q);
     const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
@@ -162,9 +198,9 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
             </div>
 
             <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none -mx-1 px-1">
-              {categoryTabs.map((cat) => (
+              {categoryTabs.map((cat, idx) => (
                 <button
-                  key={cat}
+                  key={`${cat}-${idx}`}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
                   className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition ${
@@ -274,10 +310,14 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                       {req.status}
                     </span>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-3 gap-2 text-xs">
                     <div>
                       <p className="text-neutral-500">Quantity</p>
                       <p className="font-bold text-white">{req.quantityRequested} units</p>
+                    </div>
+                    <div>
+                      <p className="text-neutral-500">Value</p>
+                      <p className="font-bold text-[#d4af37]">{formatINR(req.orderValue || 0)}</p>
                     </div>
                     <div>
                       <p className="text-neutral-500">Date</p>
@@ -302,37 +342,90 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
           </div>
         )}
 
+        {mobileTab === 'wallet' && (
+          <div className="space-y-4 pb-2">
+            <div className="cf-product-card p-4 border border-[#d4af37]/20">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-[#d4af37]" />
+                  Wallet / Ledger
+                </h2>
+                <button type="button" onClick={fetchData} disabled={loading} className="p-2 rounded-lg border border-white/10 text-[#d4af37]">
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs mb-4">
+                <div className="bg-[#171717] rounded-lg p-2.5 border border-white/10">
+                  <p className="text-neutral-500">Outstanding</p>
+                  <p className="text-white font-bold">{formatINR(credit.outstandingBalance)}</p>
+                </div>
+                <div className="bg-[#171717] rounded-lg p-2.5 border border-white/10">
+                  <p className="text-neutral-500">Available Credit</p>
+                  <p className="text-[#d4af37] font-bold">{formatINR(credit.availableCredit)}</p>
+                </div>
+              </div>
+              <DealerLedger entries={ledgerEntries} loading={loading} />
+            </div>
+          </div>
+        )}
+
         {mobileTab === 'account' && (
           <div className="space-y-4 pb-2">
+            <div className="cf-product-card p-5 space-y-3 border border-[#d4af37]/20">
+              <div className="flex items-center gap-2 text-[#d4af37]">
+                <Landmark className="w-4 h-4" />
+                <h3 className="text-sm font-semibold text-white">Credit Account</h3>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-[#171717] rounded-lg p-3 border border-white/10">
+                  <p className="text-neutral-500">Credit Limit</p>
+                  <p className="text-white font-bold mt-1">{formatINR(credit.creditLimit)}</p>
+                </div>
+                <div className="bg-[#171717] rounded-lg p-3 border border-white/10">
+                  <p className="text-neutral-500">Used Credit</p>
+                  <p className="text-white font-bold mt-1">{formatINR(credit.usedCredit)}</p>
+                </div>
+                <div className="bg-[#171717] rounded-lg p-3 border border-white/10">
+                  <p className="text-neutral-500">Available Credit</p>
+                  <p className="text-[#d4af37] font-bold mt-1">{formatINR(credit.availableCredit)}</p>
+                </div>
+                <div className="bg-[#171717] rounded-lg p-3 border border-white/10">
+                  <p className="text-neutral-500">Outstanding</p>
+                  <p className="text-white font-bold mt-1">{formatINR(credit.outstandingBalance)}</p>
+                </div>
+              </div>
+              <p className="text-[10px] text-neutral-500">Payment terms: <span className="text-neutral-300">{credit.creditDays} days</span></p>
+            </div>
+
             <div className="cf-product-card p-5 space-y-4">
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-1 bg-[#b65200]/20 text-[#d4af37] text-[10px] font-bold rounded-full uppercase border border-[#d4af37]/30">
-                  {dealerUser.status}
+                  {profile.status}
                 </span>
               </div>
               <div>
-                <h2 className="text-xl font-semibold text-white">{dealerUser.companyName}</h2>
-                <p className="text-sm text-neutral-400 mt-1">{dealerUser.ownerName}</p>
+                <h2 className="text-xl font-semibold text-white">{profile.companyName}</h2>
+                <p className="text-sm text-neutral-400 mt-1">{profile.ownerName}</p>
               </div>
               <div className="space-y-2 text-sm border-t border-white/10 pt-4">
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Email</span>
-                  <span className="font-medium text-white text-right truncate ml-4">{dealerUser.email}</span>
+                  <span className="font-medium text-white text-right truncate ml-4">{profile.email}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Mobile</span>
-                  <span className="font-medium text-white">+91 {dealerUser.mobile}</span>
+                  <span className="font-medium text-white">+91 {profile.mobile}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">GST</span>
-                  <span className="font-mono font-medium text-[#d4af37]">{dealerUser.gstNumber}</span>
+                  <span className="font-mono font-medium text-[#d4af37]">{profile.gstNumber}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Location</span>
-                  <span className="font-medium text-white">{dealerUser.city}, {dealerUser.state}</span>
+                  <span className="font-medium text-white">{profile.city}, {profile.state}</span>
                 </div>
               </div>
-              <p className="text-xs text-neutral-500 leading-relaxed">{dealerUser.address}</p>
+              <p className="text-xs text-neutral-500 leading-relaxed">{profile.address}</p>
             </div>
 
             <button
@@ -348,10 +441,11 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
       </main>
 
       <nav className="cf-dealer-bottom-nav fixed bottom-0 inset-x-0 z-30 px-2 pt-2">
-        <div className="max-w-lg mx-auto grid grid-cols-3 gap-1">
+        <div className="max-w-lg mx-auto grid grid-cols-4 gap-1">
           {([
             { id: 'catalog' as const, label: 'Catalog', icon: Package2 },
             { id: 'orders' as const, label: 'Indents', icon: ClipboardList, badge: pendingCount },
+            { id: 'wallet' as const, label: 'Wallet', icon: BookOpen },
             { id: 'account' as const, label: 'Account', icon: User },
           ]).map(({ id, label, icon: Icon, badge }) => (
             <button
@@ -456,7 +550,23 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                   />
                 </div>
 
-                <button type="submit" disabled={submitting} className="w-full cf-btn-brand py-3.5 rounded-xl text-sm">
+                <div className="text-xs bg-[#171717] rounded-lg p-3 border border-white/10 space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Order Value</span>
+                    <span className="text-white font-bold">{formatINR(selectedOrderValue)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-neutral-500">Available Credit</span>
+                    <span className={exceedsCredit ? 'text-red-400 font-bold' : 'text-[#d4af37] font-bold'}>
+                      {formatINR(credit.availableCredit)}
+                    </span>
+                  </div>
+                  {exceedsCredit && (
+                    <p className="text-red-400 font-semibold pt-1 border-t border-white/10">Order cannot be placed</p>
+                  )}
+                </div>
+
+                <button type="submit" disabled={submitting || exceedsCredit} className="w-full cf-btn-brand py-3.5 rounded-xl text-sm disabled:opacity-50">
                   {submitting ? 'Submitting...' : 'Submit Stock Indent'}
                 </button>
               </form>

@@ -17,6 +17,12 @@ export interface DealerProfile {
   role: UserRole;
   rejectionReason?: string;
   suspensionReason?: string;
+  /** Wholesale credit limit in INR */
+  creditLimit?: number;
+  /** Amount currently owed / reserved against credit (pending + fulfilled orders) */
+  outstandingBalance?: number;
+  /** Payment terms in days */
+  creditDays?: number;
 }
 
 export interface CategoryItem {
@@ -62,4 +68,26 @@ export interface StockRequirement {
   requestedDate: string;
   status: 'Pending' | 'Fulfilled' | 'Cancelled';
   notes?: string;
+  /** Order value in INR (wholesale price × quantity) */
+  orderValue?: number;
+}
+
+export type LedgerEntryType =
+  | 'opening'
+  | 'payment'
+  | 'order'
+  | 'order_cancel'
+  | 'credit_note'
+  | 'adjustment';
+
+export interface LedgerEntry {
+  id: string;
+  dealerId: string;
+  date: string;
+  description: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  type: LedgerEntryType;
+  referenceId?: string;
 }

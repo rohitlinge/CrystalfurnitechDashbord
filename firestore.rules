@@ -45,7 +45,10 @@ service cloud.firestore {
              (data.gstNumber == 'N/A' || (data.gstNumber is string && data.gstNumber.size() <= 20)) &&
              data.city is string && data.city.size() >= 2 && data.city.size() <= 50 &&
              data.state is string && data.state.size() >= 2 && data.state.size() <= 50 &&
-             data.address is string && data.address.size() >= 5 && data.address.size() <= 300;
+             data.address is string && data.address.size() >= 5 && data.address.size() <= 300 &&
+             (!('creditLimit' in data) || ((data.creditLimit is int || data.creditLimit is number) && data.creditLimit >= 0)) &&
+             (!('outstandingBalance' in data) || ((data.outstandingBalance is int || data.outstandingBalance is number) && data.outstandingBalance >= 0)) &&
+             (!('creditDays' in data) || ((data.creditDays is int || data.creditDays is number) && data.creditDays >= 0));
     }
 
     function isValidCategory(data) {
@@ -66,7 +69,17 @@ service cloud.firestore {
              data.productId is string && data.productId.size() > 0 &&
              data.productName is string && data.productName.size() >= 3 &&
              data.dealerId is string && data.dealerId.size() > 0 &&
-             data.status in ['Pending', 'Fulfilled', 'Cancelled'];
+             data.status in ['Pending', 'Fulfilled', 'Cancelled'] &&
+             (!('orderValue' in data) || ((data.orderValue is int || data.orderValue is number) && data.orderValue >= 0));
+    }
+
+    function isValidLedger(data) {
+      return data.dealerId is string && data.dealerId.size() > 0 &&
+             data.description is string && data.description.size() >= 1 && data.description.size() <= 200 &&
+             (data.debit is int || data.debit is number) && data.debit >= 0 &&
+             (data.credit is int || data.credit is number) && data.credit >= 0 &&
+             (data.balance is int || data.balance is number) && data.balance >= 0 &&
+             data.type in ['opening', 'payment', 'order', 'order_cancel', 'credit_note', 'adjustment'];
     }
 
     match /{document=**} {
@@ -100,12 +113,24 @@ service cloud.firestore {
       allow update: if isSignedIn() && isValidId(userId) && (
         isAdmin() || (
           isOwner(userId) &&
-          isValidDealer(request.resource.data) &&
           request.resource.data.role == resource.data.role &&
           request.resource.data.status == resource.data.status &&
           request.resource.data.email == resource.data.email &&
           request.resource.data.uid == resource.data.uid &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['companyName', 'ownerName', 'mobile', 'address', 'city', 'state'])
+          (
+            (
+              isValidDealer(request.resource.data) &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['companyName', 'ownerName', 'mobile', 'address', 'city', 'state'])
+            )
+            ||
+            (
+              isOwner(userId) &&
+              resource.data.role == 'dealer' &&
+              resource.data.status == 'Approved' &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['outstandingBalance']) &&
+              request.resource.data.outstandingBalance >= 0
+            )
+          )
         )
       );
 
@@ -155,6 +180,23 @@ service cloud.firestore {
       );
 
       allow delete: if isAdmin() && isValidId(requirementId);
+    }
+
+    match /ledger/{entryId} {
+      allow get: if isSignedIn() && isValidId(entryId) && (
+        resource.data.dealerId == request.auth.uid || isAdmin()
+      );
+      allow list: if isSignedIn() && (
+        resource.data.dealerId == request.auth.uid || isAdmin()
+      );
+      allow create: if isSignedIn() && isValidId(entryId) && isValidLedger(request.resource.data) && (
+        isAdmin() || (
+          isApprovedDealer() &&
+          request.resource.data.dealerId == request.auth.uid &&
+          request.resource.data.type in ['order', 'order_cancel']
+        )
+      );
+      allow update, delete: if isAdmin() && isValidId(entryId);
     }
 
     match /notifications/{notificationId} {

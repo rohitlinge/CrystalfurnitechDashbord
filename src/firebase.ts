@@ -24,7 +24,8 @@ import {
   type QuerySnapshot
 } from 'firebase/firestore';
 import { getStorage, ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem } from './types';
+import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem, LedgerEntry, LedgerEntryType } from './types';
+import { DEFAULT_DEALER_CREDIT, getDealerCreditInfo } from './credit';
 
 import firebaseAppletConfig from '../firebase-applet-config.json';
 
@@ -205,14 +206,18 @@ async function fetchCollection<T>(
         `REST query ${collectionName}`
       );
     } catch (restError) {
-      console.warn(`REST query ${collectionName} failed, trying SDK:`, restError);
+console.warn(`REST query ${collectionName} failed, trying SDK:`, restError);
       const colRef = collection(db, collectionName);
-      const snapshot = await withTimeout(
-        getDocs(query(colRef, where(options.filterField, '==', options.filterValue))),
-        FIRESTORE_READ_TIMEOUT_MS,
-        msg
-      );
-      return mapQuerySnapshot<T>(snapshot);
+      try {
+        const snapshot = await withTimeout(
+          getDocs(query(colRef, where(options.filterField, '==', options.filterValue))),
+          FIRESTORE_READ_TIMEOUT_MS,
+          msg
+        );
+return mapQuerySnapshot<T>(snapshot);
+      } catch (sdkError) {
+throw sdkError;
+      }
     }
   }
 
@@ -901,6 +906,23 @@ async function updateStockRequirementStatusViaRest(
   const oldStatus = reqData.status;
   if (oldStatus === status) return;
 
+  if (oldStatus === 'Pending' && status === 'Cancelled') {
+    const orderValue = reqData.orderValue || 0;
+    if (orderValue > 0 && reqData.dealerId) {
+      await applyLedgerMovement(
+        reqData.dealerId,
+        {
+          type: 'order_cancel',
+          description: `Order Cancelled — ${reqData.productName}`,
+          debit: 0,
+          credit: orderValue,
+          referenceId: id,
+        },
+        idToken
+      );
+    }
+  }
+
   if (oldStatus === 'Pending' && status === 'Fulfilled') {
     const productData = await withTimeout(
       getDocumentRest<ProductItem>('products', reqData.productId, idToken),
@@ -939,6 +961,68 @@ async function updateStockRequirementStatusViaRest(
     15000,
     'Failed to update stock requirement status.'
   );
+}
+
+async function applyLedgerMovement(
+  dealerId: string,
+  params: {
+    type: LedgerEntryType;
+    description: string;
+    debit: number;
+    credit: number;
+    referenceId?: string;
+  },
+  idToken: string,
+  options: { updateOutstanding?: boolean } = {}
+): Promise<LedgerEntry> {
+  const updateOutstanding = options.updateOutstanding !== false;
+const dealer = await withTimeout(
+    getDocumentRest<DealerProfile>('dealers', dealerId, idToken),
+    FIRESTORE_READ_TIMEOUT_MS,
+    'Reading dealer for ledger timed out.'
+  );
+  if (!dealer) {
+    throw new Error('Dealer profile not found.');
+  }
+
+  const currentBalance = dealer.outstandingBalance ?? 0;
+  const newBalance = Math.max(0, currentBalance + params.debit - params.credit);
+
+  if (updateOutstanding) {
+    try {
+      await withTimeout(
+        patchDocumentRest('dealers', dealerId, { outstandingBalance: newBalance }, idToken),
+        15000,
+        'Failed to update dealer balance.'
+      );
+    } catch (patchErr) {
+throw patchErr;
+    }
+  }
+
+  const entry: LedgerEntry = {
+    id: 'led_' + Math.random().toString(36).substring(2, 11),
+    dealerId,
+    date: new Date().toISOString(),
+    description: params.description,
+    debit: params.debit,
+    credit: params.credit,
+    balance: newBalance,
+    type: params.type,
+    referenceId: params.referenceId,
+  };
+
+  try {
+    await withTimeout(
+      writeDocumentRest('ledger', entry.id, entry as unknown as Record<string, unknown>, idToken),
+      15000,
+      'Failed to write ledger entry.'
+    );
+  } catch (writeErr) {
+throw writeErr;
+  }
+
+  return entry;
 }
 
 export class DBService {
@@ -1258,7 +1342,8 @@ export class DBService {
       address: fields.address,
       status: 'Pending Approval',
       registrationDate: new Date().toISOString(),
-      role: 'dealer'
+      role: 'dealer',
+      ...DEFAULT_DEALER_CREDIT,
     };
 
     try {
@@ -1421,6 +1506,47 @@ export class DBService {
     );
   }
 
+  static async updateDealerCredit(
+    uid: string,
+    fields: { creditLimit?: number; outstandingBalance?: number; creditDays?: number }
+  ): Promise<void> {
+    await ensureAdminAuthenticated();
+    const idToken = await auth.currentUser!.getIdToken(true);
+    const current = await getDocument<DealerProfile>('dealers', uid, 'Reading dealer timed out.');
+
+    const updates: Record<string, number> = {};
+    if (fields.creditLimit !== undefined) updates.creditLimit = Math.max(0, fields.creditLimit);
+    if (fields.outstandingBalance !== undefined) updates.outstandingBalance = Math.max(0, fields.outstandingBalance);
+    if (fields.creditDays !== undefined) updates.creditDays = Math.max(0, fields.creditDays);
+
+    if (fields.outstandingBalance !== undefined && current) {
+      const oldBalance = current.outstandingBalance ?? 0;
+      const newBalance = Math.max(0, fields.outstandingBalance);
+      const diff = newBalance - oldBalance;
+      if (diff !== 0) {
+        await applyLedgerMovement(
+          uid,
+          {
+            type: 'adjustment',
+            description: 'Balance Adjustment',
+            debit: diff > 0 ? diff : 0,
+            credit: diff < 0 ? Math.abs(diff) : 0,
+          },
+          idToken,
+          { updateOutstanding: false }
+        );
+      }
+    }
+
+    if (Object.keys(updates).length === 0) return;
+
+    await withTimeout(
+      updateDoc(doc(db, 'dealers', uid), updates),
+      15000,
+      'Failed to update dealer credit in Firebase.'
+    );
+  }
+
   static async addDealer(fields: Omit<DealerProfile, 'uid' | 'status' | 'registrationDate' | 'role'> & {password: string}): Promise<DealerProfile> {
     await ensureAdminAuthenticated();
     const cleanEmail = fields.email.toLowerCase().trim();
@@ -1436,7 +1562,10 @@ export class DBService {
       address: fields.address,
       status: 'Approved',
       registrationDate: new Date().toISOString(),
-      role: 'dealer'
+      role: 'dealer',
+      creditLimit: fields.creditLimit ?? DEFAULT_DEALER_CREDIT.creditLimit,
+      outstandingBalance: fields.outstandingBalance ?? 0,
+      creditDays: fields.creditDays ?? DEFAULT_DEALER_CREDIT.creditDays,
     };
 
     let fbUid = '';
@@ -1480,6 +1609,19 @@ export class DBService {
         15000,
         'Saving dealer profile timed out.'
       );
+
+      const idToken = await auth.currentUser!.getIdToken(true);
+      await applyLedgerMovement(
+        fbUid,
+        {
+          type: 'opening',
+          description: 'Opening Balance',
+          debit: newProfile.outstandingBalance ?? 0,
+          credit: 0,
+        },
+        idToken,
+        { updateOutstanding: false }
+      );
     } catch (error: unknown) {
       throw new Error(formatFirebaseError(error, 'Failed to add dealer.'));
     }
@@ -1488,44 +1630,74 @@ export class DBService {
   }
 
   // --- Submit Stock Requirement (Dealer Action) ---
-  static async submitStockRequirement(reqData: Omit<StockRequirement, 'id' | 'requestedDate' | 'status'>): Promise<StockRequirement> {
+  static async submitStockRequirement(reqData: Omit<StockRequirement, 'id' | 'requestedDate' | 'status' | 'orderValue'>): Promise<StockRequirement> {
     await ensureAuthenticated();
     if (auth.currentUser?.uid !== reqData.dealerId) {
       throw new Error('You can only submit indents for your own dealer account.');
     }
 
     const newReqId = 'req_' + Math.random().toString(36).substring(2, 11);
+    const idToken = await auth.currentUser!.getIdToken(true);
+
+    const [dealer, product] = await Promise.all([
+      withTimeout(
+        getDocumentRest<DealerProfile>('dealers', reqData.dealerId, idToken),
+        FIRESTORE_READ_TIMEOUT_MS,
+        'Reading dealer profile timed out.'
+      ),
+      withTimeout(
+        getDocumentRest<ProductItem>('products', reqData.productId, idToken),
+        FIRESTORE_READ_TIMEOUT_MS,
+        'Reading product timed out.'
+      ),
+    ]);
+
+    if (!dealer) {
+      throw new Error('Dealer profile not found.');
+    }
+    if (!product) {
+      throw new Error('Product does not exist.');
+    }
+
+    const currentStock = product.availableStock || 0;
+    if (currentStock < reqData.quantityRequested) {
+      throw new Error(
+        `Insufficient available stock for ${product.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`
+      );
+    }
+
+    const unitPrice = product.wholesalePrice || product.price || 0;
+    const orderValue = unitPrice * reqData.quantityRequested;
+    const { availableCredit } = getDealerCreditInfo(dealer);
+
+    if (orderValue > availableCredit) {
+      throw new Error('Order cannot be placed');
+    }
+
     const newReq: StockRequirement = {
       ...reqData,
       id: newReqId,
       requestedDate: new Date().toISOString(),
-      status: 'Pending'
+      status: 'Pending',
+      orderValue,
     };
 
-    try {
-      await runTransaction(db, async (transaction) => {
-        const productRef = doc(db, 'products', reqData.productId);
-        const productDoc = await transaction.get(productRef);
-
-        if (!productDoc.exists()) {
-          throw new Error('Product does not exist.');
-        }
-
-        const productData = productDoc.data() as ProductItem;
-        const currentStock = productData.availableStock || 0;
-
-        if (currentStock < reqData.quantityRequested) {
-          throw new Error(
-            `Insufficient available stock for ${productData.name}. Requested: ${reqData.quantityRequested}, Available: ${currentStock}`
-          );
-        }
-
-        const reqRef = doc(db, 'requirements', newReqId);
-        transaction.set(reqRef, newReq);
-      });
-    } catch (error: unknown) {
-      throw error;
-    }
+    await withTimeout(
+      writeDocumentRest('requirements', newReqId, newReq as unknown as Record<string, unknown>, idToken),
+      15000,
+      'Failed to submit stock indent.'
+    );
+    await applyLedgerMovement(
+      reqData.dealerId,
+      {
+        type: 'order',
+        description: `Order Amount — ${product.name} (${reqData.quantityRequested} units)`,
+        debit: orderValue,
+        credit: 0,
+        referenceId: newReqId,
+      },
+      idToken
+    );
 
     return newReq;
   }
@@ -1551,10 +1723,7 @@ export class DBService {
 
   // --- Update Stock Requirement Status ---
   static async updateStockRequirementStatus(id: string, status: 'Pending' | 'Fulfilled' | 'Cancelled'): Promise<void> {
-    // #region agent log
-    fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:entry',message:'fulfill flow started',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    if (status === 'Fulfilled') {
+if (status === 'Fulfilled') {
       await ensureAdminAuthenticated();
     } else {
       await ensureAuthenticated();
@@ -1564,19 +1733,14 @@ export class DBService {
 
     try {
       await updateStockRequirementStatusViaRest(id, status, idToken);
-      // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'REST fulfill committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-    } catch (restError) {
+} catch (restError) {
       const restMsg = restError instanceof Error ? restError.message : String(restError);
       const retryable = /timed out|network|fetch failed|Failed to fetch|ECONNRESET|ERR_NETWORK/i.test(restMsg);
-      // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:restFailed',message:retryable?'REST failed, trying SDK':'REST failed, not retrying',data:{reqId:id,targetStatus:status,error:restMsg,retryable},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
-      // #endregion
-      if (!retryable) {
+if (!retryable) {
         throw new Error(formatFirebaseError(restError, 'Failed to update stock requirement.'));
       }
       try {
+        let cancelledReq: StockRequirement | null = null;
         await withTimeout(
           runTransaction(db, async (transaction) => {
             const reqRef = doc(db, 'requirements', id);
@@ -1592,6 +1756,10 @@ export class DBService {
             if (oldStatus === status) return;
 
             transaction.update(reqRef, { status });
+
+            if (oldStatus === 'Pending' && status === 'Cancelled') {
+              cancelledReq = reqData;
+            }
 
             if (oldStatus === 'Pending' && status === 'Fulfilled') {
               const productRef = doc(db, 'products', reqData.productId);
@@ -1624,16 +1792,85 @@ export class DBService {
           20000,
           'Stock fulfillment timed out. Please check your connection and try again.'
         );
-        // #region agent log
-        fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'SDK transaction committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
-      } catch (error: unknown) {
-        // #region agent log
-        fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:error',message:'fulfill failed',data:{reqId:id,targetStatus:status,error:error instanceof Error?error.message:String(error)},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
-        throw new Error(formatFirebaseError(error, 'Failed to update stock requirement.'));
+        if (cancelledReq && (cancelledReq.orderValue || 0) > 0 && cancelledReq.dealerId) {
+          await applyLedgerMovement(
+            cancelledReq.dealerId,
+            {
+              type: 'order_cancel',
+              description: `Order Cancelled — ${cancelledReq.productName}`,
+              debit: 0,
+              credit: cancelledReq.orderValue || 0,
+              referenceId: id,
+            },
+            idToken
+          );
+        }
+} catch (error: unknown) {
+throw new Error(formatFirebaseError(error, 'Failed to update stock requirement.'));
       }
     }
+  }
+
+  // --- Dealer Wallet / Ledger ---
+  static async getDealerLedger(dealerId?: string): Promise<LedgerEntry[]> {
+    if (dealerId) {
+      await ensureAuthenticated();
+      const authUid = auth.currentUser?.uid;
+      const uidMatch = authUid === dealerId;
+try {
+        const entries = await fetchCollection<LedgerEntry>('ledger', {
+          filterField: 'dealerId',
+          filterValue: dealerId,
+          timeoutMsg: 'Ledger request timed out.',
+        });
+return entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      } catch (ledgerErr) {
+throw ledgerErr;
+      }
+    }
+
+    await ensureAdminAuthenticated();
+    const all = await fetchCollection<LedgerEntry>('ledger', {
+      requireAdmin: true,
+      timeoutMsg: 'Ledger request timed out.',
+    });
+    return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  static async recordDealerPayment(dealerId: string, amount: number, note?: string): Promise<LedgerEntry> {
+    await ensureAdminAuthenticated();
+    if (amount <= 0) {
+      throw new Error('Payment amount must be greater than zero.');
+    }
+    const idToken = await auth.currentUser!.getIdToken(true);
+    return applyLedgerMovement(
+      dealerId,
+      {
+        type: 'payment',
+        description: note?.trim() ? `Payment Received — ${note.trim()}` : 'Payment Received',
+        debit: 0,
+        credit: amount,
+      },
+      idToken
+    );
+  }
+
+  static async recordDealerCreditNote(dealerId: string, amount: number, note?: string): Promise<LedgerEntry> {
+    await ensureAdminAuthenticated();
+    if (amount <= 0) {
+      throw new Error('Credit note amount must be greater than zero.');
+    }
+    const idToken = await auth.currentUser!.getIdToken(true);
+    return applyLedgerMovement(
+      dealerId,
+      {
+        type: 'credit_note',
+        description: note?.trim() ? `Credit Note — ${note.trim()}` : 'Credit Note',
+        debit: 0,
+        credit: amount,
+      },
+      idToken
+    );
   }
 
   // --- Delete Stock Requirement (Admin Action) ---

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, Suspense, lazy, Component, type ReactNode } from 'react';
 import { DBService, ensureFirebaseConnection, auth, waitForAuthReady, getFirebaseSetupHint } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { DealerProfile } from './types';
@@ -16,6 +16,38 @@ function ScreenLoader() {
       <div className="w-8 h-8 border-2 border-[#d4af37]/30 border-t-[#d4af37] rounded-full animate-spin" />
     </div>
   );
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  declare props: { children: ReactNode };
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+console.error('App render error:', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen bg-[#0f0f0f] text-white flex flex-col items-center justify-center p-6 text-center">
+          <p className="text-red-400 font-semibold mb-2">Something went wrong loading the dashboard.</p>
+          <p className="text-neutral-400 text-sm mb-4 max-w-md">{this.state.error.message}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 rounded-lg bg-[#b65200] text-white text-sm font-semibold"
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 export default function App() {
@@ -108,11 +140,18 @@ export default function App() {
     setCurrentScreen('login');
   };
 
+  useEffect(() => {
+    if (!booting && (currentScreen === 'admin' || currentScreen === 'dealer') && !currentUser) {
+      setCurrentScreen('login');
+    }
+  }, [booting, currentScreen, currentUser]);
+
   if (booting) {
     return <ScreenLoader />;
   }
 
   return (
+    <AppErrorBoundary>
     <div className="min-h-screen bg-[#0f0f0f] text-white flex flex-col antialiased">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
@@ -160,5 +199,6 @@ export default function App() {
         </Suspense>
       )}
     </div>
+    </AppErrorBoundary>
   );
 }
