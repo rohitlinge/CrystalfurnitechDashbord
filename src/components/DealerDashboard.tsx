@@ -129,13 +129,12 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
 
   return (
     <div className="cf-dealer min-h-screen flex flex-col">
-      {/* Mobile header */}
-      <header className="cf-dealer-header sticky top-0 z-20 px-4 py-3 flex items-center justify-between shadow-md">
+      <header className="cf-dealer-header sticky top-0 z-20 px-4 py-3 flex items-center justify-between">
         <BrandLogo variant="light" size="sm" subtitle="Dealer Portal" />
         <button
           type="button"
           onClick={onLogout}
-          className="p-2 rounded-lg border border-white/20 text-white hover:bg-white/10 transition"
+          className="p-2 rounded-lg border border-[#d4af37]/30 text-[#d4af37] hover:bg-[#b65200]/20 transition"
           aria-label="Sign out"
         >
           <LogOut className="w-4 h-4" />
@@ -146,7 +145,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         {mobileTab === 'catalog' && (
           <>
             <div className="relative">
-              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-4 h-4 text-[#d4af37]/60 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="search"
                 placeholder="Search products, SKU..."
@@ -164,8 +163,8 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                   onClick={() => setSelectedCategory(cat)}
                   className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition ${
                     selectedCategory === cat
-                      ? 'bg-[#b65200] text-white'
-                      : 'bg-white border border-neutral-200 text-neutral-600'
+                      ? 'bg-gradient-to-r from-[#b65200] to-[#d66b0f] text-white shadow-sm'
+                      : 'bg-[#222222] border border-white/10 text-neutral-400 hover:border-[#d4af37]/40 hover:text-[#d4af37]'
                   }`}
                 >
                   {cat}
@@ -176,14 +175,14 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
             <div className="space-y-3 pb-2">
               {filteredProducts.length === 0 ? (
                 <div className="text-center py-12 text-neutral-500 text-sm">
-                  <Package2 className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <Package2 className="w-10 h-10 mx-auto mb-2 text-[#d4af37]/40" />
                   No products found
                 </div>
               ) : (
                 filteredProducts.map((p) => (
                   <article key={p.id} className="cf-product-card">
                     <div className="flex gap-3 p-3">
-                      <div className="w-24 h-24 rounded-lg overflow-hidden bg-neutral-100 shrink-0">
+                      <div className="w-24 h-24 rounded-lg overflow-hidden bg-[#171717] shrink-0 ring-1 ring-white/5">
                         <img
                           src={p.image}
                           alt={p.name}
@@ -193,15 +192,15 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                       </div>
                       <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                         <div>
-                          <p className="text-[10px] font-semibold text-[#b65200] uppercase tracking-wide">{p.category}</p>
-                          <h3 className="text-sm font-semibold text-black leading-snug line-clamp-2">{p.name}</h3>
+                          <p className="text-[10px] font-semibold text-[#d4af37] uppercase tracking-wide">{p.category}</p>
+                          <h3 className="text-sm font-semibold text-white leading-snug line-clamp-2">{p.name}</h3>
                           <p className="text-xs text-neutral-500 font-mono mt-0.5">{p.sku}</p>
                         </div>
                         <div className="flex items-end justify-between mt-2">
                           <div>
-                            <p className="text-base font-bold text-black">₹{p.price.toLocaleString('en-IN')}</p>
+                            <p className="text-base font-bold text-white">₹{p.price.toLocaleString('en-IN')}</p>
                             <p className={`text-[10px] font-semibold ${
-                              p.availableStock === 0 ? 'text-red-600' : p.availableStock <= 5 ? 'text-[#b65200]' : 'text-green-700'
+                              p.availableStock === 0 ? 'text-red-400' : p.availableStock <= 5 ? 'text-[#d66b0f]' : 'text-green-400'
                             }`}>
                               {p.availableStock === 0 ? 'Out of stock' : `${p.availableStock} in stock`}
                             </p>
@@ -233,20 +232,20 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         {mobileTab === 'orders' && (
           <div className="space-y-3 pb-2">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-black">My Stock Indents</h2>
+              <h2 className="text-lg font-semibold text-white">My Stock Indents</h2>
               <button
                 type="button"
                 onClick={fetchData}
                 disabled={loading}
-                className="p-2 rounded-lg border border-neutral-200 bg-white"
+                className="p-2 rounded-lg border border-[#d4af37]/30 bg-[#222222] hover:border-[#d4af37] transition"
               >
-                <RefreshCw className={`w-4 h-4 text-[#b65200] ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-4 h-4 text-[#d4af37] ${loading ? 'animate-spin' : ''}`} />
               </button>
             </div>
 
             {myRequirements.length === 0 ? (
               <div className="cf-product-card p-8 text-center text-neutral-500 text-sm">
-                <ClipboardList className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                <ClipboardList className="w-10 h-10 mx-auto mb-2 text-[#d4af37]/40" />
                 No indents yet. Browse the catalog to submit one.
               </div>
             ) : (
@@ -254,16 +253,16 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                 <div key={req.id} className="cf-product-card p-4 space-y-3">
                   <div className="flex justify-between gap-2">
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-black truncate">{req.productName}</h3>
-                      <p className="text-[10px] text-neutral-400 font-mono">{req.id}</p>
+                      <h3 className="text-sm font-semibold text-white truncate">{req.productName}</h3>
+                      <p className="text-[10px] text-neutral-500 font-mono">{req.id}</p>
                     </div>
                     <span
                       className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                         req.status === 'Fulfilled'
-                          ? 'bg-green-100 text-green-800'
+                          ? 'bg-green-500/15 text-green-400 border border-green-500/30'
                           : req.status === 'Cancelled'
-                          ? 'bg-neutral-100 text-neutral-500'
-                          : 'bg-[#fef3e8] text-[#b65200]'
+                          ? 'bg-white/5 text-neutral-500 border border-white/10'
+                          : 'bg-[#b65200]/20 text-[#d66b0f] border border-[#b65200]/40'
                       }`}
                     >
                       {req.status}
@@ -271,22 +270,22 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <p className="text-neutral-400">Quantity</p>
-                      <p className="font-bold text-black">{req.quantityRequested} units</p>
+                      <p className="text-neutral-500">Quantity</p>
+                      <p className="font-bold text-white">{req.quantityRequested} units</p>
                     </div>
                     <div>
-                      <p className="text-neutral-400">Date</p>
-                      <p className="font-medium text-black">
+                      <p className="text-neutral-500">Date</p>
+                      <p className="font-medium text-white">
                         {new Date(req.requestedDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
                       </p>
                     </div>
                   </div>
-                  {req.notes && <p className="text-xs text-neutral-500 italic border-t border-neutral-100 pt-2">"{req.notes}"</p>}
+                  {req.notes && <p className="text-xs text-neutral-400 italic border-t border-white/10 pt-2">"{req.notes}"</p>}
                   {req.status === 'Pending' && (
                     <button
                       type="button"
                       onClick={() => handleCancelRequirement(req.id)}
-                      className="w-full py-2 text-xs font-semibold text-red-600 border border-red-200 rounded-lg"
+                      className="w-full py-2 text-xs font-semibold text-red-400 border border-red-500/30 rounded-lg hover:bg-red-500/10 transition"
                     >
                       Cancel Request
                     </button>
@@ -301,33 +300,33 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
           <div className="space-y-4 pb-2">
             <div className="cf-product-card p-5 space-y-4">
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 bg-[#fef3e8] text-[#b65200] text-[10px] font-bold rounded-full uppercase">
+                <span className="px-2.5 py-1 bg-[#b65200]/20 text-[#d4af37] text-[10px] font-bold rounded-full uppercase border border-[#d4af37]/30">
                   {dealerUser.status}
                 </span>
               </div>
               <div>
-                <h2 className="text-xl font-semibold text-black">{dealerUser.companyName}</h2>
-                <p className="text-sm text-neutral-500 mt-1">{dealerUser.ownerName}</p>
+                <h2 className="text-xl font-semibold text-white">{dealerUser.companyName}</h2>
+                <p className="text-sm text-neutral-400 mt-1">{dealerUser.ownerName}</p>
               </div>
-              <div className="space-y-2 text-sm border-t border-neutral-100 pt-4">
+              <div className="space-y-2 text-sm border-t border-white/10 pt-4">
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Email</span>
-                  <span className="font-medium text-black text-right truncate ml-4">{dealerUser.email}</span>
+                  <span className="font-medium text-white text-right truncate ml-4">{dealerUser.email}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Mobile</span>
-                  <span className="font-medium text-black">+91 {dealerUser.mobile}</span>
+                  <span className="font-medium text-white">+91 {dealerUser.mobile}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">GST</span>
-                  <span className="font-mono font-medium text-black">{dealerUser.gstNumber}</span>
+                  <span className="font-mono font-medium text-[#d4af37]">{dealerUser.gstNumber}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-neutral-500">Location</span>
-                  <span className="font-medium text-black">{dealerUser.city}, {dealerUser.state}</span>
+                  <span className="font-medium text-white">{dealerUser.city}, {dealerUser.state}</span>
                 </div>
               </div>
-              <p className="text-xs text-neutral-400 leading-relaxed">{dealerUser.address}</p>
+              <p className="text-xs text-neutral-500 leading-relaxed">{dealerUser.address}</p>
             </div>
 
             <button
@@ -342,7 +341,6 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         )}
       </main>
 
-      {/* Bottom navigation */}
       <nav className="cf-dealer-bottom-nav fixed bottom-0 inset-x-0 z-30 px-2 pt-2">
         <div className="max-w-lg mx-auto grid grid-cols-3 gap-1">
           {([
@@ -354,14 +352,14 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
               key={id}
               type="button"
               onClick={() => setMobileTab(id)}
-              className={`flex flex-col items-center gap-0.5 py-2 rounded-xl transition relative ${
-                mobileTab === id ? 'cf-dealer-tab-active bg-[#fef3e8]' : 'text-neutral-400'
+              className={`flex flex-col items-center gap-0.5 py-2.5 rounded-xl transition relative ${
+                mobileTab === id ? 'cf-dealer-tab-active' : 'text-neutral-500 hover:text-neutral-300'
               }`}
             >
               <Icon className="w-5 h-5" />
               <span className="text-[10px] font-semibold">{label}</span>
               {badge ? (
-                <span className="absolute top-1 right-1/4 min-w-[16px] h-4 px-1 bg-[#b65200] text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                <span className="absolute top-0.5 right-1/4 min-w-[16px] h-4 px-1 bg-[#b65200] text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-1 ring-[#d4af37]/50">
                   {badge}
                 </span>
               ) : null}
@@ -370,54 +368,56 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         </div>
       </nav>
 
-      {/* Bottom sheet — stock indent */}
       {selectedProduct && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50" onClick={() => !submitting && setSelectedProduct(null)}>
+        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/70 backdrop-blur-sm" onClick={() => !submitting && setSelectedProduct(null)}>
           <div
-            className="bg-white rounded-t-2xl max-h-[90vh] overflow-y-auto animate-slide-up"
+            className="cf-dealer-sheet rounded-t-2xl max-h-[90vh] overflow-y-auto animate-slide-up"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="sticky top-0 bg-white border-b border-neutral-100 px-4 py-3 flex items-center justify-between">
-              <h3 className="font-semibold text-black">Stock Indent</h3>
-              <button type="button" onClick={() => setSelectedProduct(null)} className="p-1 text-neutral-400">
+            <div className="sticky top-0 bg-[#1a1a1a] border-b border-white/10 px-4 py-3 flex items-center justify-between">
+              <h3 className="font-semibold text-white flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4 text-[#d4af37]" />
+                Stock Indent
+              </h3>
+              <button type="button" onClick={() => setSelectedProduct(null)} className="p-1 text-neutral-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {submitSuccess ? (
               <div className="p-8 text-center space-y-2">
-                <CheckCircle className="w-12 h-12 text-green-600 mx-auto" />
-                <p className="font-semibold text-black">Indent Submitted</p>
-                <p className="text-sm text-neutral-500">Your request was sent to Crystal Furnitech.</p>
+                <CheckCircle className="w-12 h-12 text-green-400 mx-auto" />
+                <p className="font-semibold text-white">Indent Submitted</p>
+                <p className="text-sm text-neutral-400">Your request was sent to Crystal Furnitech.</p>
               </div>
             ) : (
               <form onSubmit={handleSubmitRequirement} className="p-4 space-y-4 pb-8">
                 <div className="flex gap-3">
-                  <img src={selectedProduct.image} alt="" className="w-16 h-16 rounded-lg object-cover bg-neutral-100" referrerPolicy="no-referrer" />
+                  <img src={selectedProduct.image} alt="" className="w-16 h-16 rounded-lg object-cover bg-[#171717] ring-1 ring-white/10" referrerPolicy="no-referrer" />
                   <div>
-                    <p className="font-semibold text-black text-sm">{selectedProduct.name}</p>
+                    <p className="font-semibold text-white text-sm">{selectedProduct.name}</p>
                     <p className="text-xs text-neutral-500 font-mono">{selectedProduct.sku}</p>
-                    <p className="text-sm font-bold text-[#b65200] mt-1">
+                    <p className="text-sm font-bold text-[#d4af37] mt-1">
                       ₹{(selectedProduct.wholesalePrice || selectedProduct.price).toLocaleString('en-IN')}
                     </p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs bg-neutral-50 rounded-lg p-3">
-                  <div><span className="text-neutral-400 block">Material</span>{selectedProduct.material}</div>
-                  <div><span className="text-neutral-400 block">Stock</span>{selectedProduct.availableStock} units</div>
-                  <div className="col-span-2"><span className="text-neutral-400 block">Dimensions</span>{selectedProduct.dimensions}</div>
+                <div className="grid grid-cols-2 gap-2 text-xs bg-[#171717] rounded-lg p-3 border border-white/10">
+                  <div><span className="text-neutral-500 block">Material</span><span className="text-white">{selectedProduct.material}</span></div>
+                  <div><span className="text-neutral-500 block">Stock</span><span className="text-white">{selectedProduct.availableStock} units</span></div>
+                  <div className="col-span-2"><span className="text-neutral-500 block">Dimensions</span><span className="text-white">{selectedProduct.dimensions}</span></div>
                 </div>
 
                 {(selectedProduct.designSheetUrl || selectedProduct.brochureUrl) && (
                   <div className="flex gap-2">
                     {selectedProduct.designSheetUrl && (
-                      <a href={selectedProduct.designSheetUrl} target="_blank" rel="noopener noreferrer" className="flex-1 flex items-center justify-center gap-1 py-2 border border-neutral-200 rounded-lg text-xs font-semibold">
+                      <a href={selectedProduct.designSheetUrl} target="_blank" rel="noopener noreferrer" className="flex-1 flex items-center justify-center gap-1 py-2 cf-btn-outline rounded-lg text-xs">
                         <FileText className="w-3.5 h-3.5" /> Sheet
                       </a>
                     )}
                     {selectedProduct.brochureUrl && (
-                      <a href={selectedProduct.brochureUrl} target="_blank" rel="noopener noreferrer" className="flex-1 flex items-center justify-center gap-1 py-2 border border-neutral-200 rounded-lg text-xs font-semibold">
+                      <a href={selectedProduct.brochureUrl} target="_blank" rel="noopener noreferrer" className="flex-1 flex items-center justify-center gap-1 py-2 cf-btn-outline rounded-lg text-xs">
                         <Download className="w-3.5 h-3.5" /> Brochure
                       </a>
                     )}
@@ -425,7 +425,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                 )}
 
                 <div>
-                  <label className="text-xs font-semibold text-neutral-600 block mb-1">Quantity (units) *</label>
+                  <label className="text-xs font-semibold text-[#d4af37] block mb-1">Quantity (units) *</label>
                   <input
                     type="number"
                     required
@@ -440,7 +440,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                 </div>
 
                 <div>
-                  <label className="text-xs font-semibold text-neutral-600 block mb-1">Notes (optional)</label>
+                  <label className="text-xs font-semibold text-[#d4af37] block mb-1">Notes (optional)</label>
                   <textarea
                     value={requestNotes}
                     onChange={(e) => setRequestNotes(e.target.value)}
@@ -460,13 +460,13 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
       )}
 
       {confirmModal?.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-[#222222] border border-white/10 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-xl">
             <div className="flex gap-3">
-              <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
               <div>
-                <h4 className="font-semibold text-black">{confirmModal.title}</h4>
-                <p className="text-sm text-neutral-500 mt-1">{confirmModal.message}</p>
+                <h4 className="font-semibold text-white">{confirmModal.title}</h4>
+                <p className="text-sm text-neutral-400 mt-1">{confirmModal.message}</p>
               </div>
             </div>
             <div className="flex gap-2">
@@ -482,7 +482,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                     setConfirmModal(null);
                   }
                 }}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-red-600 text-white"
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold bg-red-600 hover:bg-red-500 text-white transition"
               >
                 {confirmModal.actionLabel}
               </button>

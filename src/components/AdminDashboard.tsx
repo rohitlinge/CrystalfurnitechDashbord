@@ -4,9 +4,10 @@ import { DealerProfile, DealerStatus, StockRequirement, CategoryItem, ProductIte
 import { 
   Users, ClipboardList, CheckCircle, Ban, Hourglass, Trash2, 
   Search, RefreshCw, LogOut, ChevronRight, X, AlertTriangle, Info, ShieldCheck, Landmark,
-  Layers, Package, Edit, Plus, Eye, EyeOff, Upload, Image as ImageIcon
+  Layers, Package, Edit, Plus, Eye, EyeOff, Upload, Image as ImageIcon, BarChart3
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
+import AdminAnalytics from './AdminAnalytics';
 
 interface AdminDashboardProps {
   adminUser: DealerProfile;
@@ -18,7 +19,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const [requirements, setRequirements] = useState<StockRequirement[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'dealers' | 'requirements' | 'categories' | 'products'>('dealers');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'dealers' | 'requirements' | 'categories' | 'products'>('analytics');
   const [loading, setLoading] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
   const [uploadingSheet, setUploadingSheet] = useState(false);
@@ -546,15 +547,23 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   );
 
   const navItems = [
+    { id: 'analytics' as const, label: 'Analytics', icon: BarChart3, count: requirements.filter(r => r.status === 'Pending').length },
     { id: 'dealers' as const, label: 'Dealers', icon: Users, count: dealers.length },
     { id: 'requirements' as const, label: 'Stock Requests', icon: ClipboardList, count: requirements.length },
     { id: 'categories' as const, label: 'Categories', icon: Layers, count: categories.length },
     { id: 'products' as const, label: 'Products', icon: Package, count: products.length },
   ];
 
+  const tabLabels: Record<typeof activeTab, string> = {
+    analytics: 'Analytics',
+    dealers: 'Dealers',
+    requirements: 'Stock Requests',
+    categories: 'Categories',
+    products: 'Products',
+  };
+
   return (
-    <div className="cf-admin min-h-screen flex text-black">
-      {/* Desktop sidebar — full-height nav */}
+    <div className="cf-admin min-h-screen flex text-white">
       <aside className="cf-admin-sidebar hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen border-r border-white/10">
         <div className="p-5 border-b border-white/10">
           <BrandLogo variant="light" size="md" subtitle="Admin Console" />
@@ -568,15 +577,15 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
               onClick={() => { setActiveTab(id); setSearchTerm(''); }}
               className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold transition cursor-pointer ${
                 activeTab === id
-                  ? 'bg-[#b65200] text-white'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
+                  ? 'cf-admin-nav-active'
+                  : 'text-white/70 cf-admin-nav-item'
               }`}
             >
               <span className="flex items-center gap-2">
                 <Icon className="w-4 h-4" />
                 {label}
               </span>
-              <span className={`text-xs px-1.5 py-0.5 rounded-md ${activeTab === id ? 'bg-white/20' : 'bg-white/10'}`}>
+              <span className={`text-xs px-1.5 py-0.5 rounded-md ${activeTab === id ? 'bg-[#222222]/20' : 'bg-[#222222]/10'}`}>
                 {count}
               </span>
             </button>
@@ -601,7 +610,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile / tablet top bar */}
-        <header className="lg:hidden bg-black text-white px-4 py-3 flex items-center justify-between sticky top-0 z-20">
+        <header className="lg:hidden cf-admin-sidebar px-4 py-3 flex items-center justify-between sticky top-0 z-20 border-b border-white/10">
           <BrandLogo variant="light" size="sm" subtitle="Admin" />
           <button type="button" onClick={onLogout} className="p-2 rounded-lg border border-white/20">
             <LogOut className="w-4 h-4" />
@@ -610,131 +619,39 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
         <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Desktop page header */}
-        <div className="hidden lg:flex items-center justify-between pb-2 border-b border-neutral-200">
+        <div className="hidden lg:flex items-center justify-between pb-2 border-b border-white/10">
           <div>
-            <h1 id="admin-h1" className="text-2xl font-semibold text-black capitalize">{activeTab.replace('requirements', 'stock requests')}</h1>
-            <p id="admin-sub" className="text-sm text-neutral-500">Crystal Furnitech backoffice — full width desktop view</p>
+            <h1 id="admin-h1" className="text-2xl font-semibold text-white">{tabLabels[activeTab]}</h1>
+            <p id="admin-sub" className="text-sm text-neutral-400">Crystal Furnitech · Luxury backoffice</p>
           </div>
-          <BrandLogo size="sm" showText={false} />
-        </div>
-        
-        {/* Statistics Panels (Bento Elegant Style) */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          
-          <div className="cf-admin-card p-5 rounded-xl flex items-center gap-4">
-            <div className="p-3 bg-neutral-100 text-black rounded-lg border border-neutral-200">
-              <Users className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] text-neutral-500 font-semibold block uppercase">All Dealers</span>
-              <span className="text-2xl font-semibold text-black">{statusCounts.total}</span>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center gap-4 border-l-2 border-l-[#f59e0b]">
-            <div className="p-3 bg-[#f59e0b]/10 text-[#f59e0b] rounded-lg border border-[#f59e0b]/20">
-              <Hourglass className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] text-[#f59e0b] font-semibold block uppercase">Pending</span>
-              <span className="text-2xl font-semibold text-black">{statusCounts.pending}</span>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center gap-4 border-l-2 border-l-[#10b981]">
-            <div className="p-3 bg-[#10b981]/10 text-[#10b981] rounded-lg border border-[#10b981]/20">
-              <CheckCircle className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] text-[#10b981] font-semibold block uppercase">Approved</span>
-              <span className="text-2xl font-semibold text-black">{statusCounts.approved}</span>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center gap-4 border-l-2 border-l-[#ef4444]">
-            <div className="p-3 bg-[#ef4444]/10 text-[#ef4444] rounded-lg border border-[#ef4444]/20">
-              <Ban className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] text-[#ef4444] font-semibold block uppercase">Rejected</span>
-              <span className="text-2xl font-semibold text-black">{statusCounts.rejected}</span>
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-xl border border-neutral-200 flex items-center gap-4 border-l-2 border-l-yellow-500 col-span-2 md:col-span-1">
-            <div className="p-3 bg-yellow-500/10 text-yellow-500 rounded-lg border border-yellow-500/20">
-              <AlertTriangle className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-[10px] text-yellow-500 font-semibold block uppercase">Suspended</span>
-              <span className="text-2xl font-semibold text-black">{statusCounts.suspended}</span>
-            </div>
-          </div>
-
+          <BrandLogo variant="light" size="sm" showText={false} />
         </div>
 
-        {/* Tab Selection Row — mobile/tablet only; desktop uses sidebar */}
-        <div className="lg:hidden flex flex-col gap-4 cf-admin-card p-4">
-          
-          <div className="flex flex-wrap gap-2 bg-neutral-100 p-1 border border-neutral-200 rounded-lg">
-            <button
-              id="tab-dealers"
-              type="button"
-              onClick={() => { setActiveTab('dealers'); setSearchTerm(''); }}
-              className={`py-2 px-3 sm:px-4 rounded-md font-semibold text-[11px] sm:text-xs tracking-wide transition flex items-center gap-2 cursor-pointer ${
-                activeTab === 'dealers' 
-                  ? 'bg-[#b65200] text-white shadow-md' 
-                  : 'text-neutral-500 hover:text-black'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              Dealers ({dealers.length})
-            </button>
-            <button
-              id="tab-requirements"
-              type="button"
-              onClick={() => { setActiveTab('requirements'); setSearchTerm(''); }}
-              className={`py-2 px-3 sm:px-4 rounded-md font-semibold text-[11px] sm:text-xs tracking-wide transition flex items-center gap-2 cursor-pointer ${
-                activeTab === 'requirements' 
-                  ? 'bg-[#b65200] text-white shadow-md' 
-                  : 'text-neutral-500 hover:text-black'
-              }`}
-            >
-              <ClipboardList className="w-4 h-4" />
-              Stock Requests ({requirements.length})
-            </button>
-            <button
-              id="tab-categories"
-              type="button"
-              onClick={() => { setActiveTab('categories'); setSearchTerm(''); }}
-              className={`py-2 px-3 sm:px-4 rounded-md font-semibold text-[11px] sm:text-xs tracking-wide transition flex items-center gap-2 cursor-pointer ${
-                activeTab === 'categories' 
-                  ? 'bg-[#b65200] text-white shadow-md' 
-                  : 'text-neutral-500 hover:text-black'
-              }`}
-            >
-              <Layers className="w-4 h-4" />
-              Categories ({categories.length})
-            </button>
-            <button
-              id="tab-products"
-              type="button"
-              onClick={() => { setActiveTab('products'); setSearchTerm(''); }}
-              className={`py-2 px-3 sm:px-4 rounded-md font-semibold text-[11px] sm:text-xs tracking-wide transition flex items-center gap-2 cursor-pointer ${
-                activeTab === 'products' 
-                  ? 'bg-[#b65200] text-white shadow-md' 
-                  : 'text-neutral-500 hover:text-black'
-              }`}
-            >
-              <Package className="w-4 h-4" />
-              Products ({products.length})
-            </button>
+        {/* Mobile tab nav */}
+        <div className="lg:hidden cf-admin-card p-4 space-y-3">
+          <div className="flex flex-wrap gap-2 bg-[#171717] p-1 border border-white/10 rounded-lg">
+            {navItems.map(({ id, label, icon: Icon, count }) => (
+              <button
+                key={id}
+                id={`tab-${id}`}
+                type="button"
+                onClick={() => { setActiveTab(id); setSearchTerm(''); }}
+                className={`py-2 px-3 sm:px-4 rounded-md font-semibold text-[11px] sm:text-xs tracking-wide transition flex items-center gap-2 cursor-pointer ${
+                  activeTab === id
+                    ? 'bg-gradient-to-r from-[#b65200] to-[#d66b0f] text-white shadow-md'
+                    : 'text-neutral-400 hover:text-[#d4af37]'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label} ({count})
+              </button>
+            ))}
           </div>
 
+          {activeTab !== 'analytics' && (
           <div className="flex flex-wrap items-center gap-3">
-            {/* Search Input */}
             <div className="relative grow sm:w-60">
-              <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
+              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-3.5" />
               <input 
                 id="admin-search"
                 type="text"
@@ -746,61 +663,136 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 }
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-4 py-3 text-xs bg-neutral-50 border border-neutral-200 text-black placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none transition"
+                className="cf-input w-full pl-9 pr-4 py-3 text-xs"
               />
             </div>
 
-            {/* Quick Action additions CTA based on tabs */}
             {activeTab === 'dealers' && (
-              <button
-                id="btn-add-dealer-cta"
-                type="button"
-                onClick={handleOpenAddDealer}
-                className="py-3 px-4 bg-[#b65200] hover:bg-[#8f4100] text-white font-bold text-xs rounded-lg transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer hover:shadow-md"
-              >
+              <button id="btn-add-dealer-cta" type="button" onClick={handleOpenAddDealer} className="py-3 px-4 cf-btn-brand text-xs rounded-lg flex items-center gap-1.5 whitespace-nowrap">
                 <Plus className="w-4 h-4" /> Add Dealer
               </button>
             )}
-
             {activeTab === 'categories' && (
-              <button
-                id="btn-add-category-cta"
-                type="button"
-                onClick={handleOpenAddCategory}
-                className="py-3 px-4 bg-[#b65200] hover:bg-[#8f4100] text-white font-bold text-xs rounded-lg transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer hover:shadow-md"
-              >
+              <button id="btn-add-category-cta" type="button" onClick={handleOpenAddCategory} className="py-3 px-4 cf-btn-brand text-xs rounded-lg flex items-center gap-1.5 whitespace-nowrap">
                 <Plus className="w-4 h-4" /> Add Category
               </button>
             )}
-
             {activeTab === 'products' && (
-              <button
-                id="btn-add-product-cta"
-                type="button"
-                onClick={handleOpenAddProduct}
-                className="py-3 px-4 bg-[#b65200] hover:bg-[#8f4100] text-white font-bold text-xs rounded-lg transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer hover:shadow-md"
-              >
+              <button id="btn-add-product-cta" type="button" onClick={handleOpenAddProduct} className="py-3 px-4 cf-btn-brand text-xs rounded-lg flex items-center gap-1.5 whitespace-nowrap">
                 <Plus className="w-4 h-4" /> Add Product
               </button>
             )}
 
-            {/* Refresh Trigger */}
-            <button 
-              id="btn-admin-refresh"
-              type="button"
-              onClick={fetchData}
-              disabled={loading}
-              title="Refresh Data List"
-              className="p-3 bg-neutral-50 border border-neutral-200 text-black hover:bg-[#fafafa] hover:text-[#09090b] rounded-lg cursor-pointer transition duration-200 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <button id="btn-admin-refresh" type="button" onClick={fetchData} disabled={loading} title="Refresh Data List" className="p-3 cf-input hover:border-[#d4af37] rounded-lg cursor-pointer transition disabled:opacity-50">
+              <RefreshCw className={`w-4 h-4 text-[#d4af37] ${loading ? 'animate-spin' : ''}`} />
             </button>
+          </div>
+          )}
+        </div>
+
+        {activeTab === 'analytics' && (
+          <AdminAnalytics dealers={dealers} products={products} requirements={requirements} />
+        )}
+
+        {activeTab !== 'analytics' && (
+        <>
+        {/* Statistics Panels */}
+        <div className="hidden lg:grid grid-cols-2 md:grid-cols-5 gap-4">
+          
+          <div className="cf-admin-card p-5 rounded-xl flex items-center gap-4">
+            <div className="p-3 bg-[#171717] text-[#d4af37] rounded-lg border border-white/10">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-neutral-400 font-semibold block uppercase">All Dealers</span>
+              <span className="text-2xl font-semibold text-white">{statusCounts.total}</span>
+            </div>
+          </div>
+
+          <div className="cf-admin-card p-5 rounded-xl flex items-center gap-4 border-l-2 border-l-[#d4af37]">
+            <div className="p-3 bg-[#f59e0b]/10 text-[#f59e0b] rounded-lg border border-[#f59e0b]/20">
+              <Hourglass className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-[#f59e0b] font-semibold block uppercase">Pending</span>
+              <span className="text-2xl font-semibold text-white">{statusCounts.pending}</span>
+            </div>
+          </div>
+
+          <div className="cf-admin-card p-5 rounded-xl flex items-center gap-4 border-l-2 border-l-[#10b981]">
+            <div className="p-3 bg-[#10b981]/10 text-[#10b981] rounded-lg border border-[#10b981]/20">
+              <CheckCircle className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-[#10b981] font-semibold block uppercase">Approved</span>
+              <span className="text-2xl font-semibold text-white">{statusCounts.approved}</span>
+            </div>
+          </div>
+
+          <div className="cf-admin-card p-5 rounded-xl flex items-center gap-4 border-l-2 border-l-[#ef4444]">
+            <div className="p-3 bg-[#ef4444]/10 text-[#ef4444] rounded-lg border border-[#ef4444]/20">
+              <Ban className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-[#ef4444] font-semibold block uppercase">Rejected</span>
+              <span className="text-2xl font-semibold text-white">{statusCounts.rejected}</span>
+            </div>
+          </div>
+
+          <div className="cf-admin-card p-5 rounded-xl flex items-center gap-4 border-l-2 border-l-yellow-500 col-span-2 md:col-span-1">
+            <div className="p-3 bg-yellow-500/10 text-yellow-500 rounded-lg border border-yellow-500/20">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[10px] text-yellow-500 font-semibold block uppercase">Suspended</span>
+              <span className="text-2xl font-semibold text-white">{statusCounts.suspended}</span>
+            </div>
           </div>
 
         </div>
 
+        {/* Desktop toolbar — search & actions */}
+        <div className="hidden lg:flex flex-col gap-4 cf-admin-card p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative grow sm:w-60">
+              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-3.5" />
+              <input
+                id="admin-search-desktop"
+                type="text"
+                placeholder={
+                  activeTab === 'dealers' ? "Search dealers..." :
+                  activeTab === 'requirements' ? "Search stock requests..." :
+                  activeTab === 'categories' ? "Search categories..." :
+                  "Search SKU, product material, color..."
+                }
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="cf-input w-full pl-9 pr-4 py-3 text-xs"
+              />
+            </div>
+            {activeTab === 'dealers' && (
+              <button type="button" onClick={handleOpenAddDealer} className="py-3 px-4 cf-btn-brand text-xs rounded-lg flex items-center gap-1.5">
+                <Plus className="w-4 h-4" /> Add Dealer
+              </button>
+            )}
+            {activeTab === 'categories' && (
+              <button type="button" onClick={handleOpenAddCategory} className="py-3 px-4 cf-btn-brand text-xs rounded-lg flex items-center gap-1.5">
+                <Plus className="w-4 h-4" /> Add Category
+              </button>
+            )}
+            {activeTab === 'products' && (
+              <button type="button" onClick={handleOpenAddProduct} className="py-3 px-4 cf-btn-brand text-xs rounded-lg flex items-center gap-1.5">
+                <Plus className="w-4 h-4" /> Add Product
+              </button>
+            )}
+            <button type="button" onClick={fetchData} disabled={loading} className="p-3 cf-input hover:border-[#d4af37] rounded-lg transition disabled:opacity-50">
+              <RefreshCw className={`w-4 h-4 text-[#d4af37] ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
         {/* Details and Lists Grid */}
-        <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden">
+        <div className="bg-[#222222] rounded-xl border border-white/10 overflow-hidden">
           
           {activeTab === 'dealers' && (
             
@@ -808,7 +800,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             <div className="overflow-x-auto min-w-full">
               <table className="min-w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-neutral-200 text-neutral-500 uppercase font-bold tracking-wider">
+                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
                     <th className="py-4 px-5">Company Details</th>
                     <th className="py-4 px-5">Contact Details</th>
                     <th className="py-4 px-5">GST Identification</th>
@@ -818,7 +810,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     <th className="py-4 px-5 text-right">Backoffice Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-200 text-neutral-500">
+                <tbody className="divide-y divide-white/10 text-neutral-500">
                    {filteredDealers.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-neutral-500 font-semibold">
@@ -833,7 +825,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                         {/* Company Detail Column */}
                         <td className="py-4 px-5">
                           <div>
-                            <span className="font-semibold text-black block text-sm">{dl.companyName}</span>
+                            <span className="font-semibold text-white block text-sm">{dl.companyName}</span>
                             <span className="text-neutral-500 text-[10px] block font-medium mt-0.5">Owner: {dl.ownerName}</span>
                           </div>
                         </td>
@@ -907,7 +899,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title="Approve Dealer Partnership"
                                 onClick={() => handleStatusChange(dl.uid, 'Approved')}
-                                className="p-1.5 bg-transparent hover:bg-[#10b981] hover:text-black hover:border-transparent text-[#10b981] border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                                className="p-1.5 bg-transparent hover:bg-[#10b981] hover:text-white hover:border-transparent text-[#10b981] border border-white/10 rounded-lg cursor-pointer transition duration-200"
                               >
                                 <CheckCircle className="w-4 h-4" />
                               </button>
@@ -920,7 +912,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title="Reject Dealer Application"
                                 onClick={() => handleOpenReasonModal(dl.uid, dl.companyName, 'Reject')}
-                                className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white hover:border-transparent text-[#ef4444] border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                                className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white hover:border-transparent text-[#ef4444] border border-white/10 rounded-lg cursor-pointer transition duration-200"
                               >
                                 <Ban className="w-4 h-4" />
                               </button>
@@ -933,7 +925,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title="Suspend Account Privileges"
                                 onClick={() => handleOpenReasonModal(dl.uid, dl.companyName, 'Suspend')}
-                                className="p-1.5 bg-transparent hover:bg-yellow-500 hover:text-black hover:border-transparent text-yellow-500 border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                                className="p-1.5 bg-transparent hover:bg-yellow-500 hover:text-white hover:border-transparent text-yellow-500 border border-white/10 rounded-lg cursor-pointer transition duration-200"
                               >
                                 <AlertTriangle className="w-4 h-4" />
                               </button>
@@ -945,7 +937,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               type="button"
                               title="Delete Dealer Record"
                               onClick={() => handleDeleteDealer(dl.uid, dl.companyName)}
-                              className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white hover:border-transparent text-neutral-500 border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                              className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white hover:border-transparent text-neutral-500 border border-white/10 rounded-lg cursor-pointer transition duration-200"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -968,7 +960,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             <div className="overflow-x-auto min-w-full">
               <table className="min-w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-neutral-200 text-neutral-500 uppercase font-bold tracking-wider">
+                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
                     <th className="py-4 px-5">Partner Dealer</th>
                     <th className="py-4 px-5">Product Details</th>
                     <th className="py-4 px-5 text-center">Qty / Indent</th>
@@ -978,7 +970,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     <th className="py-4 px-5 text-right">Fulfillment Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-200 text-neutral-500">
+                <tbody className="divide-y divide-white/10 text-neutral-500">
                   {filteredRequirements.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-neutral-500 font-semibold">
@@ -996,7 +988,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                           {/* Dealer Company */}
                           <td className="py-4 px-5">
                             <div>
-                              <span className="font-semibold text-black block text-sm">{rq.dealerCompanyName}</span>
+                              <span className="font-semibold text-white block text-sm">{rq.dealerCompanyName}</span>
                               <span className="text-[10px] text-zinc-400 font-semibold block mt-0.5">Dealer Ref: {rq.dealerId.substring(0, 8)}...</span>
                             </div>
                           </td>
@@ -1007,7 +999,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               <span className="font-semibold text-zinc-300 block text-xs">{rq.productName}</span>
                               <span className="text-[10px] text-zinc-500 block font-mono mt-0.5">ID: {rq.productId}</span>
                               {rq.notes && (
-                                <p className="text-[10px] text-zinc-400 italic mt-1 bg-neutral-50 border border-neutral-200 p-1 rounded font-sans max-w-xs whitespace-normal">
+                                <p className="text-[10px] text-zinc-400 italic mt-1 bg-[#171717] border border-white/10 p-1 rounded font-sans max-w-xs whitespace-normal">
                                   "{rq.notes}"
                                 </p>
                               )}
@@ -1015,12 +1007,12 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                           </td>
 
                           {/* Quantity */}
-                          <td className="py-4 px-5 text-center font-bold text-black text-sm">
+                          <td className="py-4 px-5 text-center font-bold text-white text-sm">
                             {rq.quantityRequested} units
                           </td>
 
                           {/* Est Stock Value */}
-                          <td className="py-4 px-5 font-mono font-semibold text-black">
+                          <td className="py-4 px-5 font-mono font-semibold text-white">
                             ₹{(totalEstimatedVal).toLocaleString('en-IN')}
                           </td>
 
@@ -1056,7 +1048,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                   id={`btn-fulfill-${rq.id}`}
                                   type="button"
                                   onClick={() => handleUpdateRequirementStatus(rq.id, 'Fulfilled')}
-                                  className="py-1 px-2.5 bg-transparent hover:bg-[#10b981]/20 hover:text-[#10b981] border border-neutral-200 text-black font-semibold text-[10px] rounded-lg transition"
+                                  className="py-1 px-2.5 bg-transparent hover:bg-[#10b981]/20 hover:text-[#10b981] border border-white/10 text-white font-semibold text-[10px] rounded-lg transition"
                                 >
                                   Fulfill Request
                                 </button>
@@ -1064,7 +1056,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                   id={`btn-cancel-${rq.id}`}
                                   type="button"
                                   onClick={() => handleUpdateRequirementStatus(rq.id, 'Cancelled')}
-                                  className="py-1 px-2.5 bg-transparent hover:bg-[#ef4444]/20 hover:text-[#ef4444] border border-neutral-200 text-[#ef4444] font-semibold text-[10px] rounded-lg transition"
+                                  className="py-1 px-2.5 bg-transparent hover:bg-[#ef4444]/20 hover:text-[#ef4444] border border-white/10 text-[#ef4444] font-semibold text-[10px] rounded-lg transition"
                                 >
                                   Reject/Cancel
                                 </button>
@@ -1076,7 +1068,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                   id={`btn-delete-req-${rq.id}`}
                                   type="button"
                                   onClick={() => handleDeleteRequirement(rq.id)}
-                                  className="p-1 px-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 border border-neutral-200 hover:border-red-500/20 rounded-lg transition flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                                  className="p-1 px-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 border border-white/10 hover:border-red-500/20 rounded-lg transition flex items-center gap-1 text-[10px] font-bold cursor-pointer"
                                   title="Delete Requirement Record"
                                 >
                                   <Trash2 className="w-3 h-3" />
@@ -1102,7 +1094,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             <div className="overflow-x-auto min-w-full animate-fade-in">
               <table className="min-w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-neutral-200 text-neutral-500 uppercase font-bold tracking-wider">
+                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
                     <th className="py-4 px-5">Category Name</th>
                     <th className="py-4 px-5">Description</th>
                     <th className="py-4 px-5">Date Created</th>
@@ -1110,7 +1102,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     <th className="py-4 px-5 text-right">Backoffice CRM Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-200 text-neutral-500">
+                <tbody className="divide-y divide-white/10 text-neutral-500">
                   {filteredCategories.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-12 text-center text-neutral-500 font-semibold">
@@ -1124,7 +1116,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                         
                         {/* Category Name */}
                         <td className="py-4 px-5">
-                          <span className="font-semibold text-black block text-sm">{cat.name}</span>
+                          <span className="font-semibold text-white block text-sm">{cat.name}</span>
                           <span className="text-[10px] text-zinc-400 font-mono block mt-0.5">ID: {cat.id}</span>
                         </td>
 
@@ -1161,7 +1153,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               type="button"
                               title={cat.isActive ? "Deactivate Category" : "Activate Category"}
                               onClick={() => handleToggleCategoryActive(cat)}
-                              className={`p-1.5 border border-neutral-200 rounded-lg cursor-pointer transition ${
+                              className={`p-1.5 border border-white/10 rounded-lg cursor-pointer transition ${
                                 cat.isActive 
                                   ? 'hover:bg-yellow-500/20 text-yellow-500 hover:text-yellow-400' 
                                   : 'hover:bg-[#10b981]/20 text-zinc-450 hover:text-[#10b981]'
@@ -1176,7 +1168,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               type="button"
                               title="Edit Category Details"
                               onClick={() => handleOpenEditCategory(cat)}
-                              className="p-1.5 bg-transparent hover:bg-zinc-850 hover:text-white text-black border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                              className="p-1.5 bg-transparent hover:bg-zinc-850 hover:text-white text-white border border-white/10 rounded-lg cursor-pointer transition duration-200"
                             >
                               <Edit className="w-4 h-4" />
                             </button>
@@ -1187,7 +1179,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               type="button"
                               title="Delete Category"
                               onClick={() => handleDeleteCategory(cat.id, cat.name)}
-                              className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white text-[#ef4444] border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                              className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white text-[#ef4444] border border-white/10 rounded-lg cursor-pointer transition duration-200"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1210,7 +1202,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             <div className="overflow-x-auto min-w-full animate-fade-in">
               <table className="min-w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-neutral-200 text-neutral-500 uppercase font-bold tracking-wider">
+                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
                     <th className="py-4 px-5">Product Details</th>
                     <th className="py-4 px-5">Category & SKU</th>
                     <th className="py-4 px-5">Wholesale Price</th>
@@ -1219,7 +1211,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     <th className="py-4 px-5 text-right">Backoffice CRM Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-neutral-200 text-neutral-500">
+                <tbody className="divide-y divide-white/10 text-neutral-500">
                   {filteredProducts.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-neutral-500 font-semibold">
@@ -1236,7 +1228,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                           {/* Rich Product Detail layout */}
                           <td className="py-4 px-5">
                             <div className="flex items-center gap-3">
-                              <div className="relative w-12 h-12 rounded-lg border border-neutral-200 overflow-hidden bg-zinc-900 flex-shrink-0">
+                              <div className="relative w-12 h-12 rounded-lg border border-white/10 overflow-hidden bg-zinc-900 flex-shrink-0">
                                 <img 
                                   src={p.image || "https://images.unsplash.com/photo-1524758631624-e2822e304c36?auto=format&fit=crop&q=80&w=300"} 
                                   alt={p.name} 
@@ -1250,7 +1242,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 )}
                               </div>
                               <div>
-                                <span className="font-semibold text-black block text-sm leading-tight">{p.name}</span>
+                                <span className="font-semibold text-white block text-sm leading-tight">{p.name}</span>
                                 <span className="text-[10px] text-zinc-400 block mt-1">{p.material} &bull; {p.color || 'No color spec'}</span>
                               </div>
                             </div>
@@ -1265,7 +1257,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                           </td>
 
                           {/* Price details */}
-                          <td className="py-4 px-5 font-mono text-xs font-semibold text-black">
+                          <td className="py-4 px-5 font-mono text-xs font-semibold text-white">
                             <div>
                               <span className="text-sm">₹{(p.wholesalePrice || p.price).toLocaleString('en-IN')}</span>
                               <span className="text-[9px] text-zinc-500 block font-semibold mt-0.5">MOQ: {p.minimumOrderQuantity || 1} units</span>
@@ -1305,7 +1297,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title={p.isActive !== false ? "Hide from B2B Portal" : "Show on B2B Portal"}
                                 onClick={() => handleToggleProductActive(p)}
-                                className={`p-1.5 border border-neutral-200 rounded-lg cursor-pointer transition ${
+                                className={`p-1.5 border border-white/10 rounded-lg cursor-pointer transition ${
                                   p.isActive !== false 
                                     ? 'hover:bg-yellow-500/20 text-yellow-500 hover:text-yellow-400' 
                                     : 'hover:bg-[#10b981]/20 text-zinc-450 hover:text-[#10b981]'
@@ -1320,7 +1312,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title="Edit Catalog Attributes"
                                 onClick={() => handleOpenEditProduct(p)}
-                                className="p-1.5 bg-transparent hover:bg-zinc-850 hover:text-white text-black border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                                className="p-1.5 bg-transparent hover:bg-zinc-850 hover:text-white text-white border border-white/10 rounded-lg cursor-pointer transition duration-200"
                               >
                                 <Edit className="w-4 h-4" />
                               </button>
@@ -1331,7 +1323,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                 type="button"
                                 title="Delete Product permanently"
                                 onClick={() => handleDeleteProduct(p.id, p.name)}
-                                className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white text-[#ef4444] border border-neutral-200 rounded-lg cursor-pointer transition duration-200"
+                                className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white text-[#ef4444] border border-white/10 rounded-lg cursor-pointer transition duration-200"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1351,30 +1343,33 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
         </div>
 
+        </>
+        )}
+
       </main>
 
       {/* Modals live inside content column */}
       {/* Reject / Suspend Feedback reason modal (Zero-dependency custom implementation) */}
       {reasonModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white rounded-xl border border-neutral-200 max-w-sm w-full p-6 space-y-4 shadow-2xl">
+          <div className="bg-[#222222] rounded-xl border border-white/10 max-w-sm w-full p-6 space-y-4 shadow-2xl">
             
             <div className="flex items-center justify-between">
-              <h4 className="text-sm font-bold text-black flex items-center gap-1.5">
+              <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
                 <AlertTriangle className="w-5 h-5 text-[#f59e0b]" />
                 Reason for Status Change
               </h4>
               <button 
                 type="button"
                 onClick={() => setReasonModal(null)}
-                className="text-neutral-500 hover:text-black transition"
+                className="text-neutral-500 hover:text-white transition"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="text-xs text-neutral-500 leading-relaxed">
-              Define the feedback reasons for <strong className="text-black">{reasonModal.companyName}</strong>. This custom message is displayed instantly on their login block.
+              Define the feedback reasons for <strong className="text-white">{reasonModal.companyName}</strong>. This custom message is displayed instantly on their login block.
             </div>
 
             <div className="space-y-1.5">
@@ -1387,7 +1382,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   : "e.g. Accounts frozen pending statutory wholesale registration updates."
                 }
                 rows={3}
-                className="w-full text-xs p-2.5 bg-neutral-50 border border-neutral-200 text-black placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
+                className="w-full text-xs p-2.5 bg-[#171717] border border-white/10 text-white placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
               />
             </div>
 
@@ -1395,7 +1390,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
               <button
                 type="button"
                 onClick={() => setReasonModal(null)}
-                className="flex-1 py-2 bg-transparent hover:bg-neutral-100 text-xs text-black rounded-lg border border-neutral-200 font-semibold transition"
+                className="flex-1 py-2 bg-transparent hover:bg-[#171717] text-xs text-white rounded-lg border border-white/10 font-semibold transition"
               >
                 Go Back
               </button>
@@ -1403,7 +1398,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 id="btn-confirm-reason-change"
                 type="button"
                 onClick={handleConfirmReasonModal}
-                className="flex-1 py-2 bg-[#b65200] hover:bg-[#8f4100] text-white rounded-lg text-xs font-semibold transition shadow-md"
+                className="flex-1 py-2 bg-[#b65200] hover:bg-[#d66b0f] text-white rounded-lg text-xs font-semibold transition shadow-md"
               >
                 Apply status
               </button>
@@ -1416,17 +1411,17 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       {/* Category Add/Edit Modal (Step 3) */}
       {categoryModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white rounded-xl border border-neutral-200 max-w-sm w-full p-6 space-y-4 shadow-2xl">
+          <div className="bg-[#222222] rounded-xl border border-white/10 max-w-sm w-full p-6 space-y-4 shadow-2xl">
             
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
-              <h4 className="text-sm font-bold text-black flex items-center gap-1.5 uppercase tracking-wider">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h4 className="text-sm font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
                 <Layers className="w-5 h-5 text-zinc-400" />
                 {categoryModal.mode === 'add' ? 'Create New Category' : 'Edit Category'}
               </h4>
               <button 
                 type="button"
                 onClick={() => setCategoryModal(null)}
-                className="text-neutral-500 hover:text-black transition cursor-pointer"
+                className="text-neutral-500 hover:text-white transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1442,7 +1437,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   value={categoryModal.name}
                   onChange={(e) => setCategoryModal(prev => prev ? { ...prev, name: e.target.value } : null)}
                   placeholder="e.g. TV Unit Furniture"
-                  className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                  className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                 />
               </div>
 
@@ -1453,7 +1448,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   onChange={(e) => setCategoryModal(prev => prev ? { ...prev, description: e.target.value } : null)}
                   placeholder="Describe items under this collection..."
                   rows={3}
-                  className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
+                  className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
                 />
               </div>
 
@@ -1463,9 +1458,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   id="cat-active-checkbox"
                   checked={categoryModal.isActive}
                   onChange={(e) => setCategoryModal(prev => prev ? { ...prev, isActive: e.target.checked } : null)}
-                  className="w-4 h-4 accent-[#fafafa] rounded text-zinc-950 border-neutral-200 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                  className="w-4 h-4 accent-[#fafafa] rounded text-zinc-950 border-white/10 focus:ring-0 focus:ring-offset-0 cursor-pointer"
                 />
-                <label htmlFor="cat-active-checkbox" className="text-xs font-semibold text-black cursor-pointer">
+                <label htmlFor="cat-active-checkbox" className="text-xs font-semibold text-white cursor-pointer">
                   Activate instantly for B2B cataloging
                 </label>
               </div>
@@ -1474,14 +1469,14 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 <button
                   type="button"
                   onClick={() => setCategoryModal(null)}
-                  className="flex-1 py-3 bg-transparent hover:bg-neutral-100 text-xs text-black rounded-lg border border-neutral-200 font-bold transition"
+                  className="flex-1 py-3 bg-transparent hover:bg-[#171717] text-xs text-white rounded-lg border border-white/10 font-bold transition"
                 >
                   Cancel
                 </button>
                 <button
                   id="btn-save-cat"
                   type="submit"
-                  className="flex-1 py-3 bg-[#b65200] hover:bg-[#8f4100] text-white rounded-lg text-xs font-bold transition shadow-md"
+                  className="flex-1 py-3 bg-[#b65200] hover:bg-[#d66b0f] text-white rounded-lg text-xs font-bold transition shadow-md"
                 >
                   Save Category
                 </button>
@@ -1496,17 +1491,17 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       {/* Dealer Addition Modal */}
       {dealerModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl border border-neutral-200 max-w-xl w-full p-6 space-y-4 shadow-2xl my-auto animate-fade-in max-h-[90vh] overflow-y-auto">
+          <div className="bg-[#222222] rounded-xl border border-white/10 max-w-xl w-full p-6 space-y-4 shadow-2xl my-auto animate-fade-in max-h-[90vh] overflow-y-auto">
             
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
-              <h4 className="text-sm font-bold text-black flex items-center gap-1.5 uppercase tracking-wider">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h4 className="text-sm font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
                 <Users className="w-5 h-5 text-zinc-400" />
                 Add New Dealer Partner
               </h4>
               <button 
                 type="button"
                 onClick={() => setDealerModal(null)}
-                className="text-neutral-500 hover:text-black transition cursor-pointer"
+                className="text-neutral-500 hover:text-white transition cursor-pointer"
               >
                 <X className="w-4 h-4 animate-duration-150" />
               </button>
@@ -1531,7 +1526,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.companyName}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, companyName: e.target.value } : null)}
                     placeholder="e.g. Furnitech Enterprises"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1544,7 +1539,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.ownerName}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, ownerName: e.target.value } : null)}
                     placeholder="e.g. Rajesh Kumar"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1557,7 +1552,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.email}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, email: e.target.value } : null)}
                     placeholder="rajesh@furnitech.com"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1571,7 +1566,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.mobile}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, mobile: e.target.value.replace(/\D/g, '').substring(0, 10) } : null)}
                     placeholder="10-digit mobile number"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1584,7 +1579,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.gstNumber}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, gstNumber: e.target.value.toUpperCase() } : null)}
                     placeholder="e.g. 27AAAAA1111A1Z1"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1596,7 +1591,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.city}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, city: e.target.value } : null)}
                     placeholder="e.g. Mumbai"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1608,7 +1603,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.state}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, state: e.target.value } : null)}
                     placeholder="e.g. Maharashtra"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1622,7 +1617,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={dealerModal.password}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, password: e.target.value } : null)}
                     placeholder="Minimum 6 characters"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1634,17 +1629,17 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, address: e.target.value } : null)}
                     placeholder="Detailed warehouse or office coordinates..."
                     rows={2}
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
                   />
                 </div>
 
               </div>
 
-              <div className="flex gap-2.5 pt-3 border-t border-neutral-200">
+              <div className="flex gap-2.5 pt-3 border-t border-white/10">
                 <button
                   type="button"
                   onClick={() => setDealerModal(null)}
-                  className="flex-1 py-3 bg-transparent hover:bg-neutral-100 text-xs text-black rounded-lg border border-neutral-200 font-bold transition cursor-pointer"
+                  className="flex-1 py-3 bg-transparent hover:bg-[#171717] text-xs text-white rounded-lg border border-white/10 font-bold transition cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -1652,7 +1647,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   id="btn-save-new-dealer"
                   type="submit"
                   disabled={addingDealer}
-                  className="flex-1 py-3 bg-[#b65200] hover:bg-[#8f4100] disabled:bg-neutral-300 disabled:text-neutral-500 text-white rounded-lg text-xs font-bold transition shadow-md flex items-center justify-center gap-1 cursor-pointer"
+                  className="flex-1 py-3 bg-[#b65200] hover:bg-[#d66b0f] disabled:bg-neutral-300 disabled:text-neutral-500 text-white rounded-lg text-xs font-bold transition shadow-md flex items-center justify-center gap-1 cursor-pointer"
                 >
                   {addingDealer && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                   {addingDealer ? 'Creating Account...' : 'Register Dealer'}
@@ -1668,17 +1663,17 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       {/* Product Add/Edit Modal (Step 4) */}
       {productModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-xl border border-neutral-200 max-w-2xl w-full p-6 space-y-4 shadow-2xl my-auto animate-fade-in max-h-[90vh] overflow-y-auto">
+          <div className="bg-[#222222] rounded-xl border border-white/10 max-w-2xl w-full p-6 space-y-4 shadow-2xl my-auto animate-fade-in max-h-[90vh] overflow-y-auto">
             
-            <div className="flex items-center justify-between border-b border-neutral-200 pb-3">
-              <h4 className="text-sm font-bold text-black flex items-center gap-1.5 uppercase tracking-wider">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h4 className="text-sm font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
                 <Package className="w-5 h-5 text-zinc-400" />
                 {productModal.mode === 'add' ? 'Add B2B Product' : 'Edit Catalog Attributes'}
               </h4>
               <button 
                 type="button"
                 onClick={() => setProductModal(null)}
-                className="text-neutral-500 hover:text-black transition cursor-pointer"
+                className="text-neutral-500 hover:text-white transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1697,7 +1692,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.name || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, name: e.target.value } : null)}
                     placeholder="e.g. Royal Premium Executive Desk"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1710,7 +1705,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.sku || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, sku: e.target.value } : null)}
                     placeholder="e.g. CF-OFF-DK901"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1720,7 +1715,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   <select
                     value={productModal.category || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, category: e.target.value } : null)}
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   >
                     {categories.map((cat) => (
                       <option key={cat.id} value={cat.name}>{cat.name}</option>
@@ -1738,7 +1733,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.wholesalePrice || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, wholesalePrice: Number(e.target.value) } : null)}
                     placeholder="INR Value"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1752,7 +1747,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.minimumOrderQuantity || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, minimumOrderQuantity: Number(e.target.value) } : null)}
                     placeholder="e.g. 5 units"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1766,7 +1761,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.availableStock === undefined ? '' : productModal.availableStock}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, availableStock: Number(e.target.value) } : null)}
                     placeholder="e.g. 15 items"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1779,7 +1774,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.material || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, material: e.target.value } : null)}
                     placeholder="e.g. Engineered Pine Wood"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1791,7 +1786,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.color || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, color: e.target.value } : null)}
                     placeholder="e.g. Walnut Brown"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1804,7 +1799,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.dimensions || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, dimensions: e.target.value } : null)}
                     placeholder="e.g. 72W x 36D x 30H"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1816,7 +1811,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.weight || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, weight: e.target.value } : null)}
                     placeholder="e.g. 45 Kg"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1828,7 +1823,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.size || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, size: e.target.value } : null)}
                     placeholder="e.g. Large / Adjustable"
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>
 
@@ -1838,7 +1833,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   <select
                     value={productModal.status || 'Available'}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, status: e.target.value as 'Available' | 'Out Of Stock' } : null)}
-                    className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black rounded-lg focus:border-[#b65200] outline-none transition"
+                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   >
                     <option value="Available">Available</option>
                     <option value="Out Of Stock">Out Of Stock</option>
@@ -1856,17 +1851,17 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   onChange={(e) => setProductModal(prev => prev ? { ...prev, description: e.target.value } : null)}
                   placeholder="Detail structural aspects, B2B wholesale warranty parameters, assembly guidance..."
                   rows={3}
-                  className="w-full text-xs p-3 bg-neutral-50 border border-neutral-200 text-black placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
+                  className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white placeholder-zinc-500 rounded-lg focus:border-[#b65200] outline-none resize-none transition"
                 />
               </div>
 
               {/* Dynamic Images (Multiple Images) */}
-              <div className="space-y-2 border border-neutral-200 p-4 rounded-xl bg-neutral-50">
+              <div className="space-y-2 border border-white/10 p-4 rounded-xl bg-[#171717]">
                 <div className="flex items-center justify-between">
                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block">
                     Product Images ({productModal.images ? productModal.images.length : 0})
                   </label>
-                  <label className="cursor-pointer text-black hover:text-[#d4d4d8] text-[11px] font-bold transition flex items-center gap-1.5">
+                  <label className="cursor-pointer text-white hover:text-[#d4d4d8] text-[11px] font-bold transition flex items-center gap-1.5">
                     <Upload className="w-4 h-4" />
                     Upload with Firebase Storage
                     <input
@@ -1882,7 +1877,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 {/* Multiple Images List */}
                 <div className="grid grid-cols-6 gap-2 pt-2">
                   {productModal.images && productModal.images.map((img, idx) => (
-                    <div key={idx} className="relative aspect-square border border-neutral-200 rounded-lg bg-zinc-900 group overflow-hidden">
+                    <div key={idx} className="relative aspect-square border border-white/10 rounded-lg bg-zinc-900 group overflow-hidden">
                       <img src={img} alt="Product preview" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
                       <button
                         type="button"
@@ -1901,7 +1896,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 </div>
 
                 {/* Preset Fast Image Adder Helper */}
-                <div className="flex gap-1.5 pt-3 border-t border-neutral-200/45">
+                <div className="flex gap-1.5 pt-3 border-t border-white/10/45">
                   <input
                     id="new-manual-img-url"
                     type="text"
@@ -1916,7 +1911,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                         }
                       }
                     }}
-                    className="grow text-[10px] p-2 bg-white border border-neutral-200 text-black rounded shadow-inner outline-none focus:border-[#b65200]"
+                    className="grow text-[10px] p-2 bg-[#222222] border border-white/10 text-white rounded shadow-inner outline-none focus:border-[#b65200]"
                   />
                   <button
                     type="button"
@@ -1928,7 +1923,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                         input.value = '';
                       }
                     }}
-                    className="py-1 px-3 bg-white border border-neutral-200 hover:bg-zinc-800 text-[10px] rounded font-bold text-white transition animate-pulse"
+                    className="py-1 px-3 bg-[#222222] border border-white/10 hover:bg-zinc-800 text-[10px] rounded font-bold text-white transition animate-pulse"
                   >
                     Add
                   </button>
@@ -1936,13 +1931,13 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
               </div>
 
               {/* Design Sheets & Leaflet Brochures */}
-              <div className="grid grid-cols-2 gap-3 border border-neutral-200 p-4 rounded-xl bg-neutral-50">
+              <div className="grid grid-cols-2 gap-3 border border-white/10 p-4 rounded-xl bg-[#171717]">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block">
                     Furniture Design Sheet
                   </label>
                   {productModal.designSheetUrl ? (
-                    <div className="flex items-center justify-between gap-1.5 p-2 bg-zinc-950 rounded border border-neutral-200">
+                    <div className="flex items-center justify-between gap-1.5 p-2 bg-zinc-950 rounded border border-white/10">
                       <span className="text-[9px] text-[#10b981] font-mono truncate max-w-[110px]">{productModal.designSheetUrl}</span>
                       <button
                         type="button"
@@ -1953,7 +1948,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                       </button>
                     </div>
                   ) : (
-                    <label className="cursor-pointer text-zinc-400 hover:text-white border border-dashed border-zinc-700 p-2.5 text-center rounded-lg block text-[10px] transition hover:border-zinc-500 bg-white/50">
+                    <label className="cursor-pointer text-zinc-400 hover:text-white border border-dashed border-zinc-700 p-2.5 text-center rounded-lg block text-[10px] transition hover:border-zinc-500 bg-[#222222]/50">
                       {uploadingSheet ? 'Uploading...' : 'Upload Sheet (PDF/Img)'}
                       <input
                         type="file"
@@ -1971,7 +1966,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     Product Brochure Leaflet
                   </label>
                   {productModal.brochureUrl ? (
-                    <div className="flex items-center justify-between gap-1.5 p-2 bg-zinc-950 rounded border border-neutral-200">
+                    <div className="flex items-center justify-between gap-1.5 p-2 bg-zinc-950 rounded border border-white/10">
                       <span className="text-[9px] text-[#10b981] font-mono truncate max-w-[110px]">{productModal.brochureUrl}</span>
                       <button
                         type="button"
@@ -1982,7 +1977,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                       </button>
                     </div>
                   ) : (
-                    <label className="cursor-pointer text-zinc-400 hover:text-white border border-dashed border-zinc-700 p-2.5 text-center rounded-lg block text-[10px] transition hover:border-zinc-500 bg-white/50">
+                    <label className="cursor-pointer text-zinc-400 hover:text-white border border-dashed border-zinc-700 p-2.5 text-center rounded-lg block text-[10px] transition hover:border-zinc-500 bg-[#222222]/50">
                       {uploadingBrochure ? 'Uploading...' : 'Upload Brochure PDF'}
                       <input
                         type="file"
@@ -2003,9 +1998,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   id="prod-active-checkbox"
                   checked={productModal.isActive !== false}
                   onChange={(e) => setProductModal(prev => prev ? { ...prev, isActive: e.target.checked } : null)}
-                  className="w-4 h-4 accent-[#fafafa] rounded text-zinc-950 border-neutral-200 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                  className="w-4 h-4 accent-[#fafafa] rounded text-zinc-950 border-white/10 focus:ring-0 focus:ring-offset-0 cursor-pointer"
                 />
-                <label htmlFor="prod-active-checkbox" className="text-xs font-semibold text-black cursor-pointer">
+                <label htmlFor="prod-active-checkbox" className="text-xs font-semibold text-white cursor-pointer">
                   Activate instantly on B2B Dealer Portal
                 </label>
               </div>
@@ -2014,14 +2009,14 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 <button
                   type="button"
                   onClick={() => setProductModal(null)}
-                  className="flex-1 py-3 bg-transparent hover:bg-neutral-100 text-xs text-black rounded-lg border border-neutral-200 font-bold transition"
+                  className="flex-1 py-3 bg-transparent hover:bg-[#171717] text-xs text-white rounded-lg border border-white/10 font-bold transition"
                 >
                   Cancel
                 </button>
                 <button
                   id="btn-save-prod"
                   type="submit"
-                  className="flex-1 py-3 bg-[#b65200] hover:bg-[#8f4100] text-white rounded-lg text-xs font-bold transition shadow-md font-sans"
+                  className="flex-1 py-3 bg-[#b65200] hover:bg-[#d66b0f] text-white rounded-lg text-xs font-bold transition shadow-md font-sans"
                 >
                   Save Product specifications
                 </button>
@@ -2034,7 +2029,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
 
       {confirmModal?.isOpen && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 animate-fade-in animate-duration-150">
-          <div className="bg-white rounded-2xl border border-red-500/20 max-w-sm w-full p-6 space-y-4 shadow-2xl relative overflow-hidden">
+          <div className="bg-[#222222] rounded-2xl border border-red-500/20 max-w-sm w-full p-6 space-y-4 shadow-2xl relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-amber-500" />
             
             <div className="flex items-start gap-3">
@@ -2042,7 +2037,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div className="space-y-1">
-                <h4 className="text-sm font-bold text-black leading-none">
+                <h4 className="text-sm font-bold text-white leading-none">
                   {confirmModal.title}
                 </h4>
                 <p className="text-[11px] text-neutral-500 leading-relaxed pt-1">
@@ -2055,7 +2050,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
               <button
                 type="button"
                 onClick={() => setConfirmModal(null)}
-                className="flex-1 py-2.5 bg-transparent hover:bg-neutral-100 text-xs text-black border border-neutral-200 rounded-xl font-bold transition duration-200 cursor-pointer"
+                className="flex-1 py-2.5 bg-transparent hover:bg-[#171717] text-xs text-white border border-white/10 rounded-xl font-bold transition duration-200 cursor-pointer"
               >
                 No, Keep
               </button>

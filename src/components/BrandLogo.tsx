@@ -20,7 +20,7 @@ export default function BrandLogo({
   className = '',
 }: BrandLogoProps) {
   const textColor = variant === 'light' ? 'text-white' : 'text-black';
-  const subColor = variant === 'light' ? 'text-white/70' : 'text-neutral-500';
+  const subColor = variant === 'light' ? 'text-[#d4af37]/80' : 'text-neutral-500';
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>

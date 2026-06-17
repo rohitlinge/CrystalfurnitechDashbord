@@ -103,7 +103,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
   if (registeredSuccessfully) {
     return (
-      <div className="w-full max-w-2xl bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-2xl">
+      <div className="w-full max-w-2xl bg-[#222222] rounded-xl border border-white/10 overflow-hidden shadow-2xl">
         <div className="p-8 sm:p-12 text-center flex flex-col items-center">
           <motion.div 
             initial={{ scale: 0.5, opacity: 0 }}
@@ -113,17 +113,17 @@ export default function Register({ onBackToLogin }: RegisterProps) {
           >
             <CheckCircle2 className="w-12 h-12" />
           </motion.div>
-          <h2 id="register-success-title" className="text-3xl font-bold text-black tracking-tight mb-4">
+          <h2 id="register-success-title" className="text-3xl font-bold text-white tracking-tight mb-4">
             Thank You For Registering
           </h2>
-          <div className="max-w-md mx-auto space-y-4 text-neutral-500 leading-relaxed text-sm mb-8">
-            <p className="font-semibold text-black text-base">
+          <div className="max-w-md mx-auto space-y-4 text-neutral-400 leading-relaxed text-sm mb-8">
+            <p className="font-semibold text-white text-base">
               Your account has been submitted for verification.
             </p>
             <p>
               Our team will review your details (including GST representation, mobile coordinates, and retail footprint) and approve your dealer access shortly.
             </p>
-            <p className="bg-[#fef3e8] text-[#b65200] py-3 px-4 rounded-lg border border-[#b65200]/20 font-medium text-center">
+            <p className="bg-[#b65200]/15 text-[#d4af37] py-3 px-4 rounded-lg border border-[#d4af37]/30 font-medium text-center">
               You will be able to access the dealer portal after approval.
             </p>
           </div>
@@ -132,7 +132,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
             type="button"
             id="back-to-login"
             onClick={onBackToLogin}
-            className="w-full py-3 bg-[#b65200] text-white hover:bg-[#8f4100] transition rounded-lg font-medium text-sm flex items-center justify-center gap-2 max-w-sm cursor-pointer"
+            className="w-full py-3 cf-btn-brand transition rounded-lg font-medium text-sm flex items-center justify-center gap-2 max-w-sm cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             Proceed to Login Area
@@ -143,12 +143,12 @@ export default function Register({ onBackToLogin }: RegisterProps) {
   }
 
   return (
-    <div className="w-full max-w-3xl bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-2xl">
-      <div className="bg-black p-6 sm:p-8 text-white relative border-b border-neutral-800">
+    <div className="w-full max-w-3xl bg-[#222222] rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+      <div className="bg-[#171717] p-6 sm:p-8 text-white relative border-b border-[#d4af37]/20">
         <button 
           id="btn-back-login"
           onClick={onBackToLogin}
-          className="absolute left-6 top-6 sm:top-8 bg-white/10 hover:bg-[#b65200] text-white p-2 rounded-lg border border-white/20 transition duration-200 cursor-pointer flex items-center gap-1.5 text-xs font-medium"
+          className="absolute left-6 top-6 sm:top-8 bg-[#b65200]/20 hover:bg-[#b65200] text-[#d4af37] hover:text-white p-2 rounded-lg border border-[#d4af37]/30 transition duration-200 cursor-pointer flex items-center gap-1.5 text-xs font-medium"
         >
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -159,7 +159,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
       </div>
 
       <form onSubmit={handleSubmit} className="p-6 sm:p-10 space-y-6">
-        <h2 id="reg-sec-hdr" className="text-lg font-semibold text-black border-b border-neutral-200 pb-2 flex items-center gap-2">
+        <h2 id="reg-sec-hdr" className="text-lg font-semibold text-[#d4af37] border-b border-white/10 pb-2 flex items-center gap-2">
           Dealer Profile & Corporate Metrics
         </h2>
 
@@ -174,7 +174,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
           
           {/* Company Name */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">Company Name *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">Company Name *</label>
             <div className="relative">
               <Building2 className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -192,7 +192,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* Owner Name */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">Owner Full Name *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">Owner Full Name *</label>
             <div className="relative">
               <User className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -210,7 +210,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* Mobile Number */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">Mobile Number *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">Mobile Number *</label>
             <div className="relative">
               <Phone className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -228,7 +228,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* Email Address */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">Email Address *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">Email Address *</label>
             <div className="relative">
               <Mail className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -246,7 +246,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* GST Number */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">GST Number * <span className="text-zinc-500 font-normal">(15 Characters)</span></label>
+            <label className="text-xs font-semibold text-neutral-400 block">GST Number * <span className="text-zinc-500 font-normal">(15 Characters)</span></label>
             <div className="relative">
               <FileText className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -265,7 +265,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* City */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">City *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">City *</label>
             <div className="relative">
               <MapPin className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -283,7 +283,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* State */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">State *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">State *</label>
             <div className="relative">
               <Map className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <select 
@@ -294,7 +294,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
                 className="cf-input w-full pl-9 pr-10 py-2.5 text-sm appearance-none cursor-pointer"
               >
                 {INDIAN_STATES.map((st) => (
-                  <option key={st} value={st} className="bg-white">{st}</option>
+                  <option key={st} value={st} className="bg-[#171717]">{st}</option>
                 ))}
               </select>
               <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-neutral-500">
@@ -307,7 +307,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* Complete Address */}
           <div className="space-y-1.5 md:col-span-2">
-            <label className="text-xs font-semibold text-neutral-500 block">Complete Registered Business Address *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">Complete Registered Business Address *</label>
             <div className="relative">
               <MapPin className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -325,7 +325,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* Password */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">Password * <span className="text-zinc-500 font-normal">(Min 6 chars)</span></label>
+            <label className="text-xs font-semibold text-neutral-400 block">Password * <span className="text-zinc-500 font-normal">(Min 6 chars)</span></label>
             <div className="relative">
               <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -344,7 +344,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
           {/* Confirm Password */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-neutral-500 block">Confirm Password *</label>
+            <label className="text-xs font-semibold text-neutral-400 block">Confirm Password *</label>
             <div className="relative">
               <Lock className="w-4 h-4 text-zinc-500 absolute left-3 top-3.5" />
               <input 
@@ -370,7 +370,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
         >
           {loading ? (
             <>
-              <div className="w-4 h-4 border-2 border-[#09090b] border-t-transparent rounded-full animate-spin"></div>
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
               {loadingStep || 'Registering Dealer Account...'}
             </>
           ) : "Submit wholesale registration profile"}

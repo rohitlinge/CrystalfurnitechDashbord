@@ -78,7 +78,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-black flex flex-col antialiased">
+    <div className="min-h-screen bg-[#0f0f0f] text-white flex flex-col antialiased">
       {networkError && (
         <div className="bg-[#b65200] text-white text-center py-2.5 px-4 font-semibold text-xs flex items-center justify-between gap-2 relative z-50">
           <div className="flex items-center gap-2 mx-auto">
@@ -95,7 +95,7 @@ export default function App() {
       )}
 
       {currentScreen === 'login' && (
-        <div className="grow flex flex-col items-center justify-center p-4 py-12 bg-neutral-50">
+        <div className="grow flex flex-col items-center justify-center p-4 py-12 bg-[#0f0f0f]">
           <Login
             onLoginSuccess={handleLoginSuccess}
             onGoToRegister={() => setCurrentScreen('register')}
@@ -107,7 +107,7 @@ export default function App() {
       )}
 
       {currentScreen === 'register' && (
-        <div className="grow flex flex-col items-center justify-center p-4 py-8 bg-neutral-50">
+        <div className="grow flex flex-col items-center justify-center p-4 py-8 bg-[#0f0f0f]">
           <Register onBackToLogin={() => setCurrentScreen('login')} />
         </div>
       )}

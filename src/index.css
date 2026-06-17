@@ -6,39 +6,26 @@
   --font-serif: "Playfair Display", Georgia, serif;
 
   --color-brand: #b65200;
-  --color-brand-dark: #8f4100;
-  --color-brand-light: #fef3e8;
-  --color-brand-muted: #f5e6d8;
+  --color-brand-hover: #d66b0f;
+  --color-gold: #d4af37;
+  --color-bg: #0f0f0f;
+  --color-sidebar: #171717;
+  --color-card: #222222;
+  --color-text: #ffffff;
 
-  --color-status-pending: #b65200;
-  --color-status-approved: #166534;
-  --color-status-rejected: #991b1b;
+  --color-status-pending: #d4af37;
+  --color-status-approved: #4ade80;
+  --color-status-rejected: #f87171;
 }
 
 body {
   font-family: var(--font-sans);
-  background-color: #ffffff;
-  color: #000000;
+  background-color: #0f0f0f;
+  color: #ffffff;
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Admin desktop shell ── */
-.cf-admin {
-  background: #f5f5f5;
-  color: #000;
-}
-
-.cf-admin-sidebar {
-  background: #000;
-  color: #fff;
-}
-
-.cf-admin-card {
-  background: #fff;
-  border: 1px solid #e5e5e5;
-  border-radius: 0.75rem;
-}
-
+/* ── Shared ── */
 .cf-btn-brand {
   background: #b65200;
   color: #fff;
@@ -46,7 +33,7 @@ body {
   transition: background 0.2s;
 }
 .cf-btn-brand:hover:not(:disabled) {
-  background: #8f4100;
+  background: #d66b0f;
 }
 .cf-btn-brand:disabled {
   opacity: 0.5;
@@ -55,56 +42,99 @@ body {
 
 .cf-btn-outline {
   background: transparent;
-  border: 1px solid #d4d4d4;
-  color: #000;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+  color: #d4af37;
   font-weight: 600;
   transition: all 0.2s;
 }
 .cf-btn-outline:hover {
-  border-color: #b65200;
-  color: #b65200;
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, 0.08);
 }
 
 .cf-input {
-  background: #fff;
-  border: 1px solid #d4d4d4;
-  color: #000;
+  background: #171717;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
   border-radius: 0.5rem;
   outline: none;
   transition: border-color 0.2s;
 }
+.cf-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
 .cf-input:focus {
-  border-color: #b65200;
+  border-color: #d4af37;
+}
+
+.cf-gold-text {
+  color: #d4af37;
+}
+
+/* ── Admin desktop shell ── */
+.cf-admin {
+  background: #0f0f0f;
+  color: #ffffff;
+}
+
+.cf-admin-sidebar {
+  background: #171717;
+  color: #ffffff;
+}
+
+.cf-admin-card {
+  background: #222222;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.75rem;
+}
+
+.cf-admin-nav-active {
+  background: linear-gradient(135deg, #b65200 0%, #d66b0f 100%);
+  color: #fff;
+}
+
+.cf-admin-nav-item:hover:not(.cf-admin-nav-active) {
+  background: rgba(214, 107, 15, 0.12);
+  color: #d4af37;
 }
 
 /* ── Dealer mobile shell ── */
 .cf-dealer {
-  background: #fafafa;
-  color: #000;
-  padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  background: #0f0f0f;
+  color: #ffffff;
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+  min-height: 100dvh;
 }
 
 .cf-dealer-header {
-  background: #000;
-  color: #fff;
+  background: linear-gradient(180deg, #171717 0%, #0f0f0f 100%);
+  color: #ffffff;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.2);
 }
 
 .cf-dealer-bottom-nav {
-  background: #fff;
-  border-top: 1px solid #e5e5e5;
+  background: #171717;
+  border-top: 1px solid rgba(212, 175, 55, 0.25);
   padding-bottom: env(safe-area-inset-bottom);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
 }
 
 .cf-dealer-tab-active {
-  color: #b65200;
+  color: #d4af37;
+  background: rgba(182, 82, 0, 0.15);
 }
 
 .cf-product-card {
-  background: #fff;
-  border: 1px solid #e5e5e5;
+  background: #222222;
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 1rem;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+}
+
+.cf-dealer-sheet {
+  background: #1a1a1a;
+  color: #ffffff;
+  border-top: 2px solid #d4af37;
 }
 
 @keyframes fade-in {
@@ -121,4 +151,8 @@ body {
 }
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+.bar-fill {
+  transition: width 0.6s ease-out;
 }

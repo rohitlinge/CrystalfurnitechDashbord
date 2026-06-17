@@ -64,19 +64,19 @@ export default function Login({
   return (
     <div className="w-full max-w-md space-y-5">
       <div className="text-center space-y-3">
-        <BrandLogo size="lg" subtitle="B2B Dealer Portal" className="justify-center" />
-        <p className="text-sm text-neutral-500">Sign in to access your wholesale dashboard</p>
+        <BrandLogo variant="light" size="lg" subtitle="B2B Dealer Portal" className="justify-center" />
+        <p className="text-sm text-neutral-400">Sign in to access your wholesale dashboard</p>
       </div>
 
-      <div className="bg-white border border-neutral-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="h-1 bg-[#b65200]" />
+      <div className="bg-[#222222] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
+        <div className="h-1 bg-gradient-to-r from-[#b65200] via-[#d4af37] to-[#b65200]" />
         <div className="p-6 space-y-4">
           <div className="flex items-center justify-between text-xs">
             <span className="text-neutral-500">Firebase</span>
             {!networkChecked ? (
               <span className="text-neutral-400 animate-pulse">Checking...</span>
             ) : (
-              <span className={firebaseConnected ? 'text-green-700 font-semibold' : 'text-red-600 font-semibold'}>
+              <span className={firebaseConnected ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
                 {firebaseConnected ? 'Connected' : 'Unreachable'}
               </span>
             )}
@@ -84,9 +84,9 @@ export default function Login({
 
           {statusMessage && (
             <div className={`p-3 rounded-lg border text-xs flex gap-2 ${
-              statusMessage.type === 'pending' ? 'bg-[#fef3e8] border-[#b65200]/30 text-[#b65200]' :
-              statusMessage.type === 'rejected' ? 'bg-red-50 border-red-200 text-red-700' :
-              'bg-amber-50 border-amber-200 text-amber-800'
+              statusMessage.type === 'pending' ? 'bg-[#b65200]/15 border-[#d4af37]/30 text-[#d4af37]' :
+              statusMessage.type === 'rejected' ? 'bg-red-500/10 border-red-500/30 text-red-400' :
+              'bg-amber-500/10 border-amber-500/30 text-amber-400'
             }`}>
               {statusMessage.type === 'pending' ? <AlertTriangle className="w-4 h-4 shrink-0" /> : <AlertOctagon className="w-4 h-4 shrink-0" />}
               <div>
@@ -97,21 +97,21 @@ export default function Login({
           )}
 
           {error && (
-            <div id="login-error" className="bg-red-50 text-red-700 text-xs font-medium py-3 px-4 rounded-lg border border-red-200">
+            <div id="login-error" className="bg-red-500/10 text-red-400 text-xs font-medium py-3 px-4 rounded-lg border border-red-500/30">
               {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-neutral-600">Email</label>
+              <label className="text-xs font-semibold text-[#d4af37]">Email</label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-neutral-400 absolute left-3 top-3" />
                 <input id="login-email" type="email" required placeholder="name@business.com" value={email} onChange={(e) => setEmail(e.target.value)} className="cf-input w-full pl-9 pr-4 py-2.5 text-sm" />
               </div>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-neutral-600">Password</label>
+              <label className="text-xs font-semibold text-[#d4af37]">Password</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-neutral-400 absolute left-3 top-3" />
                 <input id="login-password" type="password" required placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} className="cf-input w-full pl-9 pr-4 py-2.5 text-sm" />
@@ -125,7 +125,7 @@ export default function Login({
 
           <p className="text-center text-xs text-neutral-500">
             New dealer?{' '}
-            <button id="btn-p-reg" type="button" onClick={onGoToRegister} className="text-[#b65200] font-bold hover:underline cursor-pointer">
+            <button id="btn-p-reg" type="button" onClick={onGoToRegister} className="text-[#d4af37] font-bold hover:underline cursor-pointer">
               Register here
             </button>
           </p>
