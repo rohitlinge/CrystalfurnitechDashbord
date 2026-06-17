@@ -1568,9 +1568,14 @@ export class DBService {
       fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:success',message:'REST fulfill committed',data:{reqId:id,targetStatus:status},timestamp:Date.now(),hypothesisId:'B'})}).catch(()=>{});
       // #endregion
     } catch (restError) {
+      const restMsg = restError instanceof Error ? restError.message : String(restError);
+      const retryable = /timed out|network|fetch failed|Failed to fetch|ECONNRESET|ERR_NETWORK/i.test(restMsg);
       // #region agent log
-      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:restFailed',message:'REST fulfill failed, trying SDK transaction',data:{reqId:id,targetStatus:status,error:restError instanceof Error?restError.message:String(restError)},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
+      fetch('http://127.0.0.1:7326/ingest/081afbec-bf39-4bf5-a9f5-67966f3178db',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bbfd20'},body:JSON.stringify({sessionId:'bbfd20',location:'firebase.ts:updateStockRequirementStatus:restFailed',message:retryable?'REST failed, trying SDK':'REST failed, not retrying',data:{reqId:id,targetStatus:status,error:restMsg,retryable},timestamp:Date.now(),hypothesisId:'F'})}).catch(()=>{});
       // #endregion
+      if (!retryable) {
+        throw new Error(formatFirebaseError(restError, 'Failed to update stock requirement.'));
+      }
       try {
         await withTimeout(
           runTransaction(db, async (transaction) => {
