@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Large dealer catalog PDFs — host via Firebase Storage or deploy asset separately (GitHub limit 100MB)
+public/PDF Catalog/*.pdf

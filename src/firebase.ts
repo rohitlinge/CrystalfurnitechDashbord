@@ -27,6 +27,9 @@ import { getStorage, ref, uploadString, uploadBytes, getDownloadURL } from 'fire
 import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem, LedgerEntry, LedgerEntryType } from './types';
 import { DEFAULT_DEALER_CREDIT, getDealerCreditInfo } from './credit';
 import {
+  formatVariantSummary,
+} from './variants';
+import {
   normalizeOrderStatus,
   getNextOrderStatus,
   isValidOrderTransition,
@@ -677,6 +680,10 @@ export const INITIAL_PRODUCTS: ProductItem[] = [
     dimensions: '110"W x 65"D x 34"H',
     material: 'Pine Wood Frame & Breathable Linen Fabric',
     color: 'Classic Grey',
+    colorVariants: ['Brown', 'Black', 'Grey'],
+    fabricVariants: ['Linen', 'Velvet', 'Premium Mesh'],
+    woodFinishVariants: ['Natural Oak', 'Walnut', 'Matte Black'],
+    sizeVariants: ['L-Shaped 5 Seater', 'U-Shaped 7 Seater'],
     size: 'L-Shaped 5 Seater',
     weight: '55 Kg',
     minimumOrderQuantity: 2,
@@ -1731,7 +1738,21 @@ export class DBService {
       reqData.dealerId,
       {
         type: 'order',
-        description: `Order Amount — ${product.name} (${reqData.quantityRequested} units)`,
+        description: `Order Amount — ${product.name} (${reqData.quantityRequested} units)${
+          formatVariantSummary({
+            color: reqData.selectedColor,
+            fabric: reqData.selectedFabric,
+            woodFinish: reqData.selectedWoodFinish,
+            size: reqData.selectedSize,
+          })
+            ? ` · ${formatVariantSummary({
+                color: reqData.selectedColor,
+                fabric: reqData.selectedFabric,
+                woodFinish: reqData.selectedWoodFinish,
+                size: reqData.selectedSize,
+              })}`
+            : ''
+        }`,
         debit: orderValue,
         credit: 0,
         referenceId: newReqId,

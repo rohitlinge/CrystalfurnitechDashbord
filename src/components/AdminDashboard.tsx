@@ -12,6 +12,7 @@ import AdminAnalytics from './AdminAnalytics';
 import Toast, { ToastMessage } from './Toast';
 import DealerLedger from './DealerLedger';
 import OrderProgress from './OrderProgress';
+import VariantTagInput from './VariantTagInput';
 import {
   orderAdvanceLabel,
   orderStatusBadgeClass,
@@ -20,6 +21,7 @@ import {
   isActiveOrder,
   normalizeOrderStatus,
 } from '../orders';
+import { formatProductVariantsPreview, formatVariantSummaryFromRequirement, productFieldsFromVariants } from '../variants';
 
 interface AdminDashboardProps {
   adminUser: DealerProfile;
@@ -108,6 +110,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     material: string;
     color: string;
     size: string;
+    colorVariants: string[];
+    fabricVariants: string[];
+    woodFinishVariants: string[];
+    sizeVariants: string[];
     dimensions: string;
     weight: string;
     wholesalePrice: number;
@@ -536,6 +542,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       material: '',
       color: '',
       size: '',
+      colorVariants: [],
+      fabricVariants: [],
+      woodFinishVariants: [],
+      sizeVariants: [],
       dimensions: '',
       weight: '',
       wholesalePrice: 5000,
@@ -559,6 +569,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       material: p.material,
       color: p.color || '',
       size: p.size || '',
+      colorVariants: p.colorVariants || (p.color ? [p.color] : []),
+      fabricVariants: p.fabricVariants || [],
+      woodFinishVariants: p.woodFinishVariants || [],
+      sizeVariants: p.sizeVariants || (p.size ? [p.size] : []),
       dimensions: p.dimensions,
       weight: p.weight || '',
       wholesalePrice: p.wholesalePrice || p.price,
@@ -585,6 +599,8 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       ? 'Low Stock'
       : 'In Stock';
 
+    const variantFields = productFieldsFromVariants(productModal);
+
     const fields: Omit<ProductItem, 'id' | 'createdDate'> = {
       name: productModal.name,
       sku: productModal.sku,
@@ -597,8 +613,12 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       status: productModal.status,
       description: productModal.description,
       material: productModal.material,
-      color: productModal.color,
-      size: productModal.size,
+      color: variantFields.color,
+      size: variantFields.size,
+      colorVariants: variantFields.colorVariants,
+      fabricVariants: variantFields.fabricVariants,
+      woodFinishVariants: variantFields.woodFinishVariants,
+      sizeVariants: variantFields.sizeVariants,
       dimensions: productModal.dimensions,
       weight: productModal.weight,
       minimumOrderQuantity: productModal.minimumOrderQuantity,
@@ -1219,6 +1239,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                                   "{rq.notes}"
                                 </p>
                               )}
+                              {formatVariantSummaryFromRequirement(rq) && (
+                                <p className="cf-td-meta mt-1 text-[#d4af37]/90">{formatVariantSummaryFromRequirement(rq)}</p>
+                              )}
                             </div>
                           </td>
 
@@ -1466,7 +1489,10 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                               </div>
                               <div>
                                 <span className="cf-td-title leading-tight">{p.name}</span>
-                                <span className="cf-td-meta block mt-1">{p.material} &bull; {p.color || 'No color spec'}</span>
+                                <span className="cf-td-meta block mt-1">{p.material}</span>
+                                {formatProductVariantsPreview(p) && (
+                                  <span className="cf-td-meta block mt-0.5 text-[#d4af37]/80">{formatProductVariantsPreview(p)}</span>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -2128,9 +2154,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   />
                 </div>
 
-                {/* Material & Accent */}
+                {/* Material */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Material *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Base Material *</label>
                   <input
                     required
                     type="text"
@@ -2141,16 +2167,36 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                   />
                 </div>
 
-                {/* Color */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Color Accent</label>
-                  <input
-                    type="text"
-                    value={productModal.color || ''}
-                    onChange={(e) => setProductModal(prev => prev ? { ...prev, color: e.target.value } : null)}
-                    placeholder="e.g. Walnut Brown"
-                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
-                  />
+                {/* Product Variants */}
+                <div className="md:col-span-2 space-y-3 p-3 rounded-lg border border-[#d4af37]/20 bg-[#171717]/50">
+                  <p className="text-xs font-semibold text-[#d4af37]">Product Variants</p>
+                  <p className="text-[10px] text-cf-muted">Add multiple options per product (comma-separated). Dealers pick variants when ordering — no separate SKUs needed.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <VariantTagInput
+                      label="Color Variants"
+                      placeholder="Brown, Black, Grey"
+                      values={productModal.colorVariants}
+                      onChange={(colorVariants) => setProductModal((prev) => prev ? { ...prev, colorVariants } : null)}
+                    />
+                    <VariantTagInput
+                      label="Fabric Variants"
+                      placeholder="Linen, Velvet, Mesh"
+                      values={productModal.fabricVariants}
+                      onChange={(fabricVariants) => setProductModal((prev) => prev ? { ...prev, fabricVariants } : null)}
+                    />
+                    <VariantTagInput
+                      label="Wood Finish Variants"
+                      placeholder="Natural Oak, Walnut, Matte Black"
+                      values={productModal.woodFinishVariants}
+                      onChange={(woodFinishVariants) => setProductModal((prev) => prev ? { ...prev, woodFinishVariants } : null)}
+                    />
+                    <VariantTagInput
+                      label="Size Variants"
+                      placeholder="3 Seater, L-Shaped, U-Shaped"
+                      values={productModal.sizeVariants}
+                      onChange={(sizeVariants) => setProductModal((prev) => prev ? { ...prev, sizeVariants } : null)}
+                    />
+                  </div>
                 </div>
 
                 {/* Dimensions */}
@@ -2174,18 +2220,6 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
                     value={productModal.weight || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, weight: e.target.value } : null)}
                     placeholder="e.g. 45 Kg"
-                    className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
-                  />
-                </div>
-
-                {/* Size */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Size Segment</label>
-                  <input
-                    type="text"
-                    value={productModal.size || ''}
-                    onChange={(e) => setProductModal(prev => prev ? { ...prev, size: e.target.value } : null)}
-                    placeholder="e.g. Large / Adjustable"
                     className="w-full text-xs p-3 bg-[#171717] border border-white/10 text-white rounded-lg focus:border-[#b65200] outline-none transition"
                   />
                 </div>

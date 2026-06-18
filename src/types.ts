@@ -48,6 +48,11 @@ export interface ProductItem {
   material: string;
   color: string;
   size: string;
+  /** Multiple options per product — e.g. Brown, Black, Grey for one sofa SKU */
+  colorVariants?: string[];
+  fabricVariants?: string[];
+  woodFinishVariants?: string[];
+  sizeVariants?: string[];
   dimensions: string;
   weight: string;
   minimumOrderQuantity: number;
@@ -69,6 +74,11 @@ export interface StockRequirement {
   /** Indent → order pipeline: Pending → Approved → Production → Packed → Dispatched → Delivered */
   status: 'Pending' | 'Approved' | 'Production' | 'Packed' | 'Dispatched' | 'Delivered' | 'Cancelled' | 'Fulfilled';
   notes?: string;
+  /** Dealer-selected variant options at order time */
+  selectedColor?: string;
+  selectedFabric?: string;
+  selectedWoodFinish?: string;
+  selectedSize?: string;
   /** Order value in INR (wholesale price × quantity) */
   orderValue?: number;
 }

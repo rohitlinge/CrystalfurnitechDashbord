@@ -6,12 +6,22 @@ import DealerLedger from './DealerLedger';
 import BrandLogo from './BrandLogo';
 import Toast, { ToastMessage } from './Toast';
 import OrderProgress from './OrderProgress';
+import VariantPicker from './VariantPicker';
 import {
   canDealerCancel,
   isActiveOrder,
   orderStatusBadgeClass,
   orderStatusLabel,
 } from '../orders';
+import {
+  defaultVariantSelections,
+  formatProductVariantsPreview,
+  formatVariantSummaryFromRequirement,
+  getProductVariantOptions,
+  validateVariantSelections,
+  type VariantSelections,
+} from '../variants';
+import { DEALER_PRICE_CATALOG, getDealerCatalogPdfUrl } from '../catalog';
 import {
   Search, LogOut, Package2, ClipboardList, User, ShoppingCart, RefreshCw,
   CheckCircle, X, FileText, Download, AlertTriangle, Landmark, BookOpen
@@ -47,6 +57,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
   const [activeTab, setActiveTab] = useState<DealerTab>('catalog');
 
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(null);
+  const [variantSelections, setVariantSelections] = useState<VariantSelections>({});
   const [requestQty, setRequestQty] = useState(5);
   const [requestNotes, setRequestNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -124,6 +135,12 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
       return;
     }
 
+    const variantError = validateVariantSelections(selectedProduct, variantSelections);
+    if (variantError) {
+      showToast(variantError, 'info');
+      return;
+    }
+
     setSubmitting(true);
     try {
       await DBService.submitStockRequirement({
@@ -133,11 +150,16 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         productName: selectedProduct.name,
         quantityRequested: requestQty,
         notes: requestNotes,
+        selectedColor: variantSelections.color,
+        selectedFabric: variantSelections.fabric,
+        selectedWoodFinish: variantSelections.woodFinish,
+        selectedSize: variantSelections.size,
       });
       setSubmitSuccess(true);
       setTimeout(() => {
         setSubmitSuccess(false);
         setSelectedProduct(null);
+        setVariantSelections({});
         setRequestQty(5);
         setRequestNotes('');
         setActiveTab('orders');
@@ -191,6 +213,14 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
 
   const statusBadgeClass = (status: StockRequirement['status']) => orderStatusBadgeClass(status);
 
+  const openProductOrder = (p: ProductItem) => {
+    setSelectedProduct(p);
+    setVariantSelections(defaultVariantSelections(p));
+    setRequestQty(Math.min(5, p.availableStock || 1));
+    setRequestNotes('');
+    setSubmitSuccess(false);
+  };
+
   const renderProductCard = (p: ProductItem) => (
     <article className="cf-product-card h-full">
       <div className="flex gap-3 p-3 lg:flex-col lg:p-0">
@@ -207,6 +237,9 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
             <p className="text-[10px] font-semibold text-[#d4af37] uppercase tracking-wide">{p.category}</p>
             <h3 className="text-sm font-semibold text-white leading-snug line-clamp-2">{p.name}</h3>
             <p className="text-xs text-cf-muted font-mono mt-0.5">{p.sku}</p>
+            {formatProductVariantsPreview(p) && (
+              <p className="text-[10px] text-[#d4af37]/80 mt-1">{formatProductVariantsPreview(p)}</p>
+            )}
           </div>
           <div className="flex items-end justify-between mt-2 gap-2">
             <div>
@@ -220,12 +253,7 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
             <button
               type="button"
               disabled={p.availableStock === 0}
-              onClick={() => {
-                setSelectedProduct(p);
-                setRequestQty(Math.min(5, p.availableStock || 1));
-                setRequestNotes('');
-                setSubmitSuccess(false);
-              }}
+              onClick={() => openProductOrder(p)}
               className="cf-btn-brand px-3 py-2 rounded-lg text-xs flex items-center gap-1 disabled:opacity-40 shrink-0"
             >
               <ShoppingCart className="w-3.5 h-3.5" />
@@ -235,6 +263,30 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         </div>
       </div>
     </article>
+  );
+
+  const catalogPdfUrl = getDealerCatalogPdfUrl();
+
+  const priceListDownloadCard = (
+    <div className="cf-product-card p-4 border border-[#d4af37]/25 flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="flex items-start gap-3 flex-1 min-w-0">
+        <div className="w-10 h-10 rounded-lg bg-[#b65200]/15 border border-[#d4af37]/30 flex items-center justify-center shrink-0">
+          <FileText className="w-5 h-5 text-[#d4af37]" />
+        </div>
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-white">{DEALER_PRICE_CATALOG.title}</h3>
+          <p className="text-xs text-cf-secondary mt-0.5">{DEALER_PRICE_CATALOG.description}</p>
+        </div>
+      </div>
+      <a
+        href={catalogPdfUrl}
+        download={DEALER_PRICE_CATALOG.downloadFilename}
+        className="cf-btn-brand px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 shrink-0 w-full sm:w-auto"
+      >
+        <Download className="w-4 h-4" />
+        Download {DEALER_PRICE_CATALOG.label}
+      </a>
+    </div>
   );
 
   const renderOrderCard = (req: StockRequirement) => (
@@ -249,6 +301,9 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
         </span>
       </div>
       <OrderProgress status={req.status} className="mb-1" />
+      {formatVariantSummaryFromRequirement(req) && (
+        <p className="text-[10px] text-[#d4af37]/90">{formatVariantSummaryFromRequirement(req)}</p>
+      )}
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div>
           <p className="text-cf-muted">Quantity</p>
@@ -337,6 +392,14 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
             <p className="text-[#d4af37] font-bold text-lg mt-0.5">{formatINR(credit.availableCredit)}</p>
             <p className="text-cf-muted mt-1">{credit.creditDays} day payment terms</p>
           </div>
+          <a
+            href={catalogPdfUrl}
+            download={DEALER_PRICE_CATALOG.downloadFilename}
+            className="w-full py-2.5 px-3 rounded-lg border border-[#d4af37]/35 text-[#d4af37] text-xs font-semibold hover:bg-[#b65200]/15 transition flex items-center justify-center gap-2"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Price List
+          </a>
           <div>
             <p className="text-[10px] text-white/40 uppercase tracking-wider">Logged in</p>
             <p className="text-sm font-semibold text-white truncate">{profile.companyName}</p>
@@ -396,6 +459,8 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
 
           {activeTab === 'catalog' && (
             <>
+              {priceListDownloadCard}
+
               <div className="relative max-w-xl lg:max-w-md">
                 <Search className="w-4 h-4 text-[#d4af37]/60 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -480,6 +545,9 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                               <span className="cf-td-title">{req.productName}</span>
                               <span className="cf-td-meta font-mono block">{req.id}</span>
                               {req.notes && <span className="cf-td-meta italic block mt-1">"{req.notes}"</span>}
+                              {formatVariantSummaryFromRequirement(req) && (
+                                <span className="cf-td-meta block mt-1 text-[#d4af37]/90">{formatVariantSummaryFromRequirement(req)}</span>
+                              )}
                             </td>
                             <td className="py-4 px-5 cf-td-value font-semibold">{req.quantityRequested} units</td>
                             <td className="py-4 px-5 cf-td-mono">{formatINR(req.orderValue || 0)}</td>
@@ -675,6 +743,12 @@ export default function DealerDashboard({ dealerUser, onLogout }: DealerDashboar
                   <div><span className="text-cf-muted block">Stock</span><span className="text-white">{selectedProduct.availableStock} units</span></div>
                   <div className="col-span-2"><span className="text-cf-muted block">Dimensions</span><span className="text-white">{selectedProduct.dimensions}</span></div>
                 </div>
+
+                <VariantPicker
+                  options={getProductVariantOptions(selectedProduct)}
+                  selections={variantSelections}
+                  onChange={setVariantSelections}
+                />
 
                 {(selectedProduct.designSheetUrl || selectedProduct.brochureUrl) && (
                   <div className="flex gap-2">
