@@ -4,6 +4,7 @@ import {
   TrendingUp, Package, Users, AlertTriangle, MapPin, BarChart3,
   ShoppingBag, Clock, IndianRupee
 } from 'lucide-react';
+import { normalizeOrderStatus, isActiveOrder, orderStatusLabel } from '../orders';
 
 interface AdminAnalyticsProps {
   dealers: DealerProfile[];
@@ -34,16 +35,21 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
     const pendingDealers = dealers.filter((d) => d.status === 'Pending Approval');
     const approvedDealers = dealers.filter((d) => d.status === 'Approved');
 
-    const pendingReqs = requirements.filter((r) => r.status === 'Pending');
-    const fulfilledReqs = requirements.filter((r) => r.status === 'Fulfilled');
+    const pendingReqs = requirements.filter((r) => normalizeOrderStatus(r.status) === 'Pending');
+    const deliveredReqs = requirements.filter((r) => normalizeOrderStatus(r.status) === 'Delivered');
+    const activeReqs = requirements.filter((r) => isActiveOrder(r.status));
+    const inProductionReqs = requirements.filter((r) => {
+      const s = normalizeOrderStatus(r.status);
+      return s === 'Production' || s === 'Packed' || s === 'Dispatched';
+    });
     const totalUnitsRequested = requirements
-      .filter((r) => r.status !== 'Cancelled')
+      .filter((r) => normalizeOrderStatus(r.status) !== 'Cancelled')
       .reduce((s, r) => s + r.quantityRequested, 0);
     const pendingUnits = pendingReqs.reduce((s, r) => s + r.quantityRequested, 0);
 
     const dealerIndentMap = new Map<string, { name: string; count: number; units: number }>();
     requirements.forEach((r) => {
-      if (r.status === 'Cancelled') return;
+      if (normalizeOrderStatus(r.status) === 'Cancelled') return;
       const cur = dealerIndentMap.get(r.dealerId) || { name: r.dealerCompanyName, count: 0, units: 0 };
       cur.count += 1;
       cur.units += r.quantityRequested;
@@ -56,7 +62,7 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
 
     const productDemandMap = new Map<string, { name: string; units: number; count: number }>();
     requirements.forEach((r) => {
-      if (r.status === 'Cancelled') return;
+      if (normalizeOrderStatus(r.status) === 'Cancelled') return;
       const cur = productDemandMap.get(r.productId) || { name: r.productName, units: 0, count: 0 };
       cur.units += r.quantityRequested;
       cur.count += 1;
@@ -85,7 +91,7 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
     const now = Date.now();
     const last30Days = requirements.filter((r) => {
       const t = new Date(r.requestedDate).getTime();
-      return now - t <= 30 * 24 * 3600 * 1000 && r.status !== 'Cancelled';
+      return now - t <= 30 * 24 * 3600 * 1000 && normalizeOrderStatus(r.status) !== 'Cancelled';
     }).length;
 
     const recentIndents = [...requirements]
@@ -104,7 +110,9 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
       pendingDealers,
       approvedDealers,
       pendingReqs,
-      fulfilledReqs,
+      deliveredReqs,
+      activeReqs,
+      inProductionReqs,
       totalUnitsRequested,
       pendingUnits,
       topDealers,
@@ -122,23 +130,24 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
   const kpis = [
     { label: 'Inventory Value', value: fmtCurrency(analytics.inventoryValue), icon: IndianRupee, accent: 'text-[#d4af37]' },
     { label: 'Total Stock Units', value: fmt(analytics.totalStockUnits), icon: Package, accent: 'text-white' },
-    { label: 'Pending Indents', value: fmt(analytics.pendingReqs.length), sub: `${fmt(analytics.pendingUnits)} units`, icon: Clock, accent: 'text-[#d66b0f]' },
+    { label: 'Pending Orders', value: fmt(analytics.pendingReqs.length), sub: `${fmt(analytics.pendingUnits)} units`, icon: Clock, accent: 'text-[#d66b0f]' },
+    { label: 'Active Orders', value: fmt(analytics.activeReqs.length), sub: `${analytics.inProductionReqs.length} in production`, icon: ShoppingBag, accent: 'text-purple-400' },
     { label: 'Approved Dealers', value: fmt(analytics.approvedDealers.length), sub: `${analytics.pendingDealers.length} pending`, icon: Users, accent: 'text-[#d4af37]' },
-    { label: 'Indents (30 days)', value: fmt(analytics.last30Days), icon: TrendingUp, accent: 'text-white' },
+    { label: 'Orders (30 days)', value: fmt(analytics.last30Days), icon: TrendingUp, accent: 'text-white' },
     { label: 'Low / Out Stock', value: `${analytics.lowStock.length} / ${analytics.outOfStock.length}`, icon: AlertTriangle, accent: 'text-red-400' },
   ];
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {kpis.map(({ label, value, sub, icon: Icon, accent }) => (
           <div key={label} className="cf-admin-card p-4 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold">{label}</span>
+              <span className="text-[10px] uppercase tracking-wider text-cf-muted font-semibold">{label}</span>
               <Icon className={`w-4 h-4 ${accent}`} />
             </div>
             <p className={`text-xl font-bold ${accent}`}>{value}</p>
-            {sub && <p className="text-[10px] text-neutral-500">{sub}</p>}
+            {sub && <p className="text-[10px] text-cf-secondary">{sub}</p>}
           </div>
         ))}
       </div>
@@ -151,7 +160,7 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
             Top Dealers by Indent Volume
           </h3>
           {analytics.topDealers.length === 0 ? (
-            <p className="text-xs text-neutral-500">No indent data yet.</p>
+            <p className="text-xs text-cf-muted">No indent data yet.</p>
           ) : (
             <div className="space-y-3">
               {analytics.topDealers.map((d, i) => (
@@ -181,7 +190,7 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
             Most Requested Products
           </h3>
           {analytics.topProducts.length === 0 ? (
-            <p className="text-xs text-neutral-500">No product demand data yet.</p>
+            <p className="text-xs text-cf-muted">No product demand data yet.</p>
           ) : (
             <div className="space-y-3">
               {analytics.topProducts.map((p, i) => (
@@ -209,14 +218,14 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
             Stock by Category
           </h3>
           {analytics.stockByCategory.length === 0 ? (
-            <p className="text-xs text-neutral-500">No categories with stock.</p>
+            <p className="text-xs text-cf-muted">No categories with stock.</p>
           ) : (
             <div className="space-y-3">
               {analytics.stockByCategory.map((c) => (
                 <div key={c.name}>
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-white">{c.name}</span>
-                    <span className="text-neutral-400">{fmt(c.units)} units · {c.products} SKUs</span>
+                    <span className="text-cf-secondary">{fmt(c.units)} units · {c.products} SKUs</span>
                   </div>
                   <div className="h-1.5 bg-[#171717] rounded-full overflow-hidden">
                     <div
@@ -237,7 +246,7 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
             Dealer Distribution by State
           </h3>
           {analytics.dealersByState.length === 0 ? (
-            <p className="text-xs text-neutral-500">No dealer location data.</p>
+            <p className="text-xs text-cf-muted">No dealer location data.</p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {analytics.dealersByState.map(([state, count]) => (
@@ -259,7 +268,7 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
             Stock Alerts
           </h3>
           {analytics.lowStock.length === 0 && analytics.outOfStock.length === 0 ? (
-            <p className="text-xs text-neutral-500">All products adequately stocked.</p>
+            <p className="text-xs text-cf-muted">All products adequately stocked.</p>
           ) : (
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {analytics.outOfStock.map((p) => (
@@ -281,35 +290,41 @@ export default function AdminAnalytics({ dealers, products, requirements }: Admi
         <div className="cf-admin-card p-5 space-y-3">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             <Clock className="w-4 h-4 text-[#d4af37]" />
-            Recent Stock Indents
+            Recent Orders
           </h3>
           {analytics.recentIndents.length === 0 ? (
-            <p className="text-xs text-neutral-500">No indents recorded.</p>
+            <p className="text-xs text-cf-muted">No orders recorded.</p>
           ) : (
             <div className="space-y-2">
-              {analytics.recentIndents.map((r) => (
+              {analytics.recentIndents.map((r) => {
+                const status = normalizeOrderStatus(r.status);
+                return (
                 <div key={r.id} className="flex items-center justify-between text-xs bg-[#171717] rounded-lg px-3 py-2.5 gap-2">
                   <div className="min-w-0">
                     <p className="text-white font-medium truncate">{r.productName}</p>
-                    <p className="text-neutral-500 truncate">{r.dealerCompanyName}</p>
+                    <p className="text-cf-muted truncate">{r.dealerCompanyName}</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-[#d4af37] font-semibold">{r.quantityRequested} units</p>
                     <p className={`text-[10px] uppercase font-bold ${
-                      r.status === 'Pending' ? 'text-[#d66b0f]' : r.status === 'Fulfilled' ? 'text-green-400' : 'text-neutral-500'
-                    }`}>{r.status}</p>
+                      status === 'Pending' ? 'text-[#d66b0f]'
+                        : status === 'Delivered' ? 'text-green-400'
+                        : status === 'Cancelled' ? 'text-red-400'
+                        : 'text-cf-secondary'
+                    }`}>{orderStatusLabel(r.status)}</p>
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
           )}
         </div>
       </div>
 
       {/* Summary row */}
-      <div className="cf-admin-card p-4 flex flex-wrap gap-6 text-xs text-neutral-400">
-        <span>Total indents: <strong className="text-white">{requirements.length}</strong></span>
-        <span>Fulfilled: <strong className="text-green-400">{analytics.fulfilledReqs.length}</strong></span>
+      <div className="cf-admin-card p-4 flex flex-wrap gap-6 text-xs text-cf-secondary">
+        <span>Total orders: <strong className="text-white">{requirements.length}</strong></span>
+        <span>Delivered: <strong className="text-green-400">{analytics.deliveredReqs.length}</strong></span>
+        <span>Active pipeline: <strong className="text-[#d66b0f]">{analytics.activeReqs.length}</strong></span>
         <span>Units requested (all time): <strong className="text-[#d4af37]">{fmt(analytics.totalUnitsRequested)}</strong></span>
         <span>Active SKUs: <strong className="text-white">{products.filter((p) => p.isActive !== false).length}</strong></span>
       </div>

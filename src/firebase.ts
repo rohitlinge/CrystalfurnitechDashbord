@@ -26,6 +26,13 @@ import {
 import { getStorage, ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem, LedgerEntry, LedgerEntryType } from './types';
 import { DEFAULT_DEALER_CREDIT, getDealerCreditInfo } from './credit';
+import {
+  normalizeOrderStatus,
+  getNextOrderStatus,
+  isValidOrderTransition,
+  isStockAllocated,
+  type OrderStatus,
+} from './orders';
 
 import firebaseAppletConfig from '../firebase-applet-config.json';
 
@@ -790,7 +797,7 @@ export function buildInitialRequirements(dealer: DealerProfile, product: Product
       productName,
       quantityRequested: 5,
       requestedDate: new Date(Date.now() - 72 * 3600 * 1000).toISOString(),
-      status: 'Fulfilled',
+      status: 'Delivered',
       notes: 'Sample fulfilled order — seeded for dashboard setup.'
     }
   ];
@@ -888,9 +895,50 @@ const setStorageItem = <T>(key: string, value: T): void => {
 };
 
 // Core DB & Auth Service Class
+async function adjustProductStockForOrder(
+  productId: string,
+  quantity: number,
+  direction: 'decrement' | 'increment',
+  idToken: string
+): Promise<void> {
+  const productData = await withTimeout(
+    getDocumentRest<ProductItem>('products', productId, idToken),
+    FIRESTORE_READ_TIMEOUT_MS,
+    'Reading product for order stock update timed out.'
+  );
+
+  if (!productData) {
+    throw new Error('Product does not exist.');
+  }
+
+  const currentStock = productData.availableStock || 0;
+  const nextStock = direction === 'decrement'
+    ? currentStock - quantity
+    : currentStock + quantity;
+
+  if (direction === 'decrement' && nextStock < 0) {
+    throw new Error(
+      `Insufficient stock to pack order. Available: ${currentStock}, Requested: ${quantity}`
+    );
+  }
+
+  const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+  const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
+
+  await withTimeout(
+    patchDocumentRest('products', productId, {
+      availableStock: nextStock,
+      stockStatus,
+      status: prodStatus,
+    }, idToken),
+    15000,
+    'Failed to update product stock.'
+  );
+}
+
 async function updateStockRequirementStatusViaRest(
   id: string,
-  status: 'Pending' | 'Fulfilled' | 'Cancelled',
+  status: OrderStatus,
   idToken: string
 ): Promise<void> {
   const reqData = await withTimeout(
@@ -903,10 +951,16 @@ async function updateStockRequirementStatusViaRest(
     throw new Error('Requirement does not exist.');
   }
 
-  const oldStatus = reqData.status;
-  if (oldStatus === status) return;
+  const oldStatus = normalizeOrderStatus(reqData.status);
+  const newStatus = status;
 
-  if (oldStatus === 'Pending' && status === 'Cancelled') {
+  if (oldStatus === newStatus) return;
+
+  if (!isValidOrderTransition(oldStatus, newStatus)) {
+    throw new Error(`Cannot move order from ${oldStatus} to ${newStatus}.`);
+  }
+
+  if (newStatus === 'Cancelled' && oldStatus !== 'Delivered') {
     const orderValue = reqData.orderValue || 0;
     if (orderValue > 0 && reqData.dealerId) {
       await applyLedgerMovement(
@@ -923,43 +977,29 @@ async function updateStockRequirementStatusViaRest(
     }
   }
 
-  if (oldStatus === 'Pending' && status === 'Fulfilled') {
-    const productData = await withTimeout(
-      getDocumentRest<ProductItem>('products', reqData.productId, idToken),
-      FIRESTORE_READ_TIMEOUT_MS,
-      'Reading product for fulfill timed out.'
+  const wasAllocated = isStockAllocated(oldStatus);
+  const willBeAllocated = isStockAllocated(newStatus);
+
+  if (!wasAllocated && willBeAllocated) {
+    await adjustProductStockForOrder(
+      reqData.productId,
+      reqData.quantityRequested,
+      'decrement',
+      idToken
     );
-
-    if (!productData) {
-      throw new Error('Product does not exist.');
-    }
-
-    const currentStock = productData.availableStock || 0;
-    if (currentStock < reqData.quantityRequested) {
-      throw new Error(
-        `Insufficient stock to fulfill. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
-      );
-    }
-
-    const nextStock = currentStock - reqData.quantityRequested;
-    const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
-    const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
-
-    await withTimeout(
-      patchDocumentRest('products', reqData.productId, {
-        availableStock: nextStock,
-        stockStatus,
-        status: prodStatus,
-      }, idToken),
-      15000,
-      'Failed to update product stock.'
+  } else if (wasAllocated && newStatus === 'Cancelled') {
+    await adjustProductStockForOrder(
+      reqData.productId,
+      reqData.quantityRequested,
+      'increment',
+      idToken
     );
   }
 
   await withTimeout(
-    patchDocumentRest('requirements', id, { status }, idToken),
+    patchDocumentRest('requirements', id, { status: newStatus }, idToken),
     15000,
-    'Failed to update stock requirement status.'
+    'Failed to update order status.'
   );
 }
 
@@ -1721,23 +1761,23 @@ export class DBService {
     return allReqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
   }
 
-  // --- Update Stock Requirement Status ---
-  static async updateStockRequirementStatus(id: string, status: 'Pending' | 'Fulfilled' | 'Cancelled'): Promise<void> {
-if (status === 'Fulfilled') {
-      await ensureAdminAuthenticated();
-    } else {
+  // --- Update Order Status (admin advances pipeline / cancel; dealer can cancel Pending) ---
+  static async updateOrderStatus(id: string, status: OrderStatus): Promise<void> {
+    if (status === 'Cancelled') {
       await ensureAuthenticated();
+    } else {
+      await ensureAdminAuthenticated();
     }
 
     const idToken = await auth.currentUser!.getIdToken(true);
 
     try {
       await updateStockRequirementStatusViaRest(id, status, idToken);
-} catch (restError) {
+    } catch (restError) {
       const restMsg = restError instanceof Error ? restError.message : String(restError);
       const retryable = /timed out|network|fetch failed|Failed to fetch|ECONNRESET|ERR_NETWORK/i.test(restMsg);
-if (!retryable) {
-        throw new Error(formatFirebaseError(restError, 'Failed to update stock requirement.'));
+      if (!retryable) {
+        throw new Error(formatFirebaseError(restError, 'Failed to update order status.'));
       }
       try {
         let cancelledReq: StockRequirement | null = null;
@@ -1751,17 +1791,25 @@ if (!retryable) {
             }
 
             const reqData = reqDoc.data() as StockRequirement;
-            const oldStatus = reqData.status;
+            const oldStatus = normalizeOrderStatus(reqData.status);
+            const newStatus = status;
 
-            if (oldStatus === status) return;
+            if (oldStatus === newStatus) return;
 
-            transaction.update(reqRef, { status });
+            if (!isValidOrderTransition(oldStatus, newStatus)) {
+              throw new Error(`Cannot move order from ${oldStatus} to ${newStatus}.`);
+            }
 
-            if (oldStatus === 'Pending' && status === 'Cancelled') {
+            transaction.update(reqRef, { status: newStatus });
+
+            if (newStatus === 'Cancelled' && oldStatus !== 'Delivered') {
               cancelledReq = reqData;
             }
 
-            if (oldStatus === 'Pending' && status === 'Fulfilled') {
+            const wasAllocated = isStockAllocated(oldStatus);
+            const willBeAllocated = isStockAllocated(newStatus);
+
+            if (!wasAllocated && willBeAllocated) {
               const productRef = doc(db, 'products', reqData.productId);
               const productDoc = await transaction.get(productRef);
 
@@ -1774,7 +1822,7 @@ if (!retryable) {
 
               if (currentStock < reqData.quantityRequested) {
                 throw new Error(
-                  `Insufficient stock to fulfill. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
+                  `Insufficient stock to pack order. Available: ${currentStock}, Requested: ${reqData.quantityRequested}`
                 );
               }
 
@@ -1787,10 +1835,28 @@ if (!retryable) {
                 stockStatus,
                 status: prodStatus,
               });
+            } else if (wasAllocated && newStatus === 'Cancelled') {
+              const productRef = doc(db, 'products', reqData.productId);
+              const productDoc = await transaction.get(productRef);
+
+              if (!productDoc.exists()) {
+                throw new Error('Product does not exist.');
+              }
+
+              const productData = productDoc.data() as ProductItem;
+              const nextStock = (productData.availableStock || 0) + reqData.quantityRequested;
+              const stockStatus = nextStock === 0 ? 'Out of Stock' : nextStock <= 5 ? 'Low Stock' : 'In Stock';
+              const prodStatus = nextStock === 0 ? 'Out Of Stock' : 'Available';
+
+              transaction.update(productRef, {
+                availableStock: nextStock,
+                stockStatus,
+                status: prodStatus,
+              });
             }
           }),
           20000,
-          'Stock fulfillment timed out. Please check your connection and try again.'
+          'Order status update timed out. Please check your connection and try again.'
         );
         if (cancelledReq && (cancelledReq.orderValue || 0) > 0 && cancelledReq.dealerId) {
           await applyLedgerMovement(
@@ -1805,10 +1871,34 @@ if (!retryable) {
             idToken
           );
         }
-} catch (error: unknown) {
-throw new Error(formatFirebaseError(error, 'Failed to update stock requirement.'));
+      } catch (error: unknown) {
+        throw new Error(formatFirebaseError(error, 'Failed to update order status.'));
       }
     }
+  }
+
+  static async advanceOrderStatus(id: string): Promise<OrderStatus> {
+    await ensureAdminAuthenticated();
+    const idToken = await auth.currentUser!.getIdToken(true);
+    const reqData = await withTimeout(
+      getDocumentRest<StockRequirement>('requirements', id, idToken),
+      FIRESTORE_READ_TIMEOUT_MS,
+      'Reading order timed out.'
+    );
+    if (!reqData) {
+      throw new Error('Order does not exist.');
+    }
+    const next = getNextOrderStatus(reqData.status);
+    if (!next) {
+      throw new Error('Order cannot be advanced further.');
+    }
+    await DBService.updateOrderStatus(id, next);
+    return next;
+  }
+
+  /** @deprecated Use updateOrderStatus */
+  static async updateStockRequirementStatus(id: string, status: OrderStatus): Promise<void> {
+    return DBService.updateOrderStatus(id, status);
   }
 
   // --- Dealer Wallet / Ledger ---

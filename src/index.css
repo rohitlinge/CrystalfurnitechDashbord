@@ -8,24 +8,75 @@
   --color-brand: #b65200;
   --color-brand-hover: #d66b0f;
   --color-gold: #d4af37;
-  --color-bg: #0f0f0f;
-  --color-sidebar: #171717;
-  --color-card: #222222;
-  --color-text: #ffffff;
 
   --color-status-pending: #d4af37;
   --color-status-approved: #4ade80;
   --color-status-rejected: #f87171;
 }
 
+/* ── Theme tokens (dark = default) ── */
+:root,
+[data-theme="dark"] {
+  --cf-bg: #0f0f0f;
+  --cf-bg-elevated: #171717;
+  --cf-sidebar: #171717;
+  --cf-card: #222222;
+  --cf-sheet: #1a1a1a;
+  --cf-text: #ffffff;
+  --cf-text-secondary: rgba(255, 255, 255, 0.7);
+  --cf-text-muted: #a3a3a3;
+  --cf-text-faint: rgba(255, 255, 255, 0.4);
+  --cf-border: rgba(255, 255, 255, 0.1);
+  --cf-border-strong: rgba(255, 255, 255, 0.2);
+  --cf-input-bg: #171717;
+  --cf-input-border: rgba(255, 255, 255, 0.12);
+  --cf-placeholder: rgba(255, 255, 255, 0.35);
+  --cf-shadow: rgba(0, 0, 0, 0.5);
+  --cf-header-gradient-start: #171717;
+  --cf-header-gradient-end: #0f0f0f;
+  --cf-nav-hover: rgba(214, 107, 15, 0.12);
+  --cf-tab-active-bg: rgba(182, 82, 0, 0.15);
+  --cf-badge-bg: rgba(34, 34, 34, 0.2);
+  --cf-overlay: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="light"] {
+  --cf-bg: #f8f6f2;
+  --cf-bg-elevated: #ffffff;
+  --cf-sidebar: #ffffff;
+  --cf-card: #ffffff;
+  --cf-sheet: #ffffff;
+  --cf-text: #0c0a09;
+  --cf-text-secondary: #292524;
+  --cf-text-muted: #44403c;
+  --cf-text-faint: #78716c;
+  --cf-border: rgba(12, 10, 9, 0.12);
+  --cf-border-strong: rgba(12, 10, 9, 0.2);
+  --cf-input-bg: #ffffff;
+  --cf-input-border: rgba(12, 10, 9, 0.18);
+  --cf-placeholder: rgba(12, 10, 9, 0.45);
+  --cf-shadow: rgba(12, 10, 9, 0.1);
+  --cf-header-gradient-start: #ffffff;
+  --cf-header-gradient-end: #f8f6f2;
+  --cf-nav-hover: rgba(182, 82, 0, 0.1);
+  --cf-tab-active-bg: rgba(182, 82, 0, 0.12);
+  --cf-badge-bg: rgba(182, 82, 0, 0.1);
+  --cf-overlay: rgba(12, 10, 9, 0.5);
+}
+
 body {
   font-family: var(--font-sans);
-  background-color: #0f0f0f;
-  color: #ffffff;
+  background-color: var(--cf-bg);
+  color: var(--cf-text);
   -webkit-font-smoothing: antialiased;
 }
 
 /* ── Shared ── */
+.cf-page {
+  background: var(--cf-bg);
+  color: var(--cf-text);
+}
+
 .cf-btn-brand {
   background: #b65200;
   color: #fff;
@@ -53,15 +104,15 @@ body {
 }
 
 .cf-input {
-  background: #171717;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #ffffff;
+  background: var(--cf-input-bg);
+  border: 1px solid var(--cf-input-border);
+  color: var(--cf-text);
   border-radius: 0.5rem;
   outline: none;
   transition: border-color 0.2s;
 }
 .cf-input::placeholder {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--cf-placeholder);
 }
 .cf-input:focus {
   border-color: #d4af37;
@@ -71,70 +122,368 @@ body {
   color: #d4af37;
 }
 
+.text-cf-primary {
+  color: var(--cf-text);
+}
+.text-cf-secondary {
+  color: var(--cf-text-secondary);
+}
+.text-cf-muted {
+  color: var(--cf-text-muted);
+}
+
+/* Logo: white pad in dark mode for contrast */
+.cf-logo-wrap {
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.5rem;
+}
+[data-theme="dark"] .cf-logo-wrap {
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] .cf-logo-wrap {
+  background: transparent;
+}
+
+/* Theme toggle — fixed top-right */
+.cf-theme-corner {
+  position: fixed;
+  top: 0.625rem;
+  right: 0.625rem;
+  z-index: 70;
+}
+
+.cf-auth-card {
+  background: var(--cf-card);
+  border: 1px solid var(--cf-border);
+  border-radius: 1rem;
+  box-shadow: 0 8px 32px var(--cf-shadow);
+}
+
+.cf-theme-toggle {
+  background: var(--cf-card);
+  border: 1px solid var(--cf-border-strong);
+  color: var(--cf-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s, color 0.2s, background 0.2s;
+}
+.cf-theme-toggle:hover {
+  border-color: #d4af37;
+  color: #d4af37;
+  background: var(--cf-nav-hover);
+}
+.cf-theme-toggle-compact {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 8px var(--cf-shadow);
+}
+
 /* ── Admin desktop shell ── */
 .cf-admin {
-  background: #0f0f0f;
-  color: #ffffff;
+  background: var(--cf-bg);
+  color: var(--cf-text);
 }
 
 .cf-admin-sidebar {
-  background: #171717;
-  color: #ffffff;
+  background: var(--cf-sidebar);
+  color: var(--cf-text);
 }
 
 .cf-admin-card {
-  background: #222222;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--cf-card);
+  border: 1px solid var(--cf-border);
   border-radius: 0.75rem;
 }
 
 .cf-admin-nav-active {
   background: linear-gradient(135deg, #b65200 0%, #d66b0f 100%);
-  color: #fff;
+  color: #fff !important;
 }
 
 .cf-admin-nav-item:hover:not(.cf-admin-nav-active) {
-  background: rgba(214, 107, 15, 0.12);
+  background: var(--cf-nav-hover);
   color: #d4af37;
 }
 
-/* ── Dealer mobile shell ── */
+/* ── Dealer shell ── */
 .cf-dealer {
-  background: #0f0f0f;
-  color: #ffffff;
+  background: var(--cf-bg);
+  color: var(--cf-text);
   padding-bottom: calc(5rem + env(safe-area-inset-bottom));
   min-height: 100dvh;
 }
 
+@media (min-width: 1024px) {
+  .cf-dealer {
+    padding-bottom: 0;
+  }
+}
+
+.cf-dealer-sidebar {
+  background: var(--cf-sidebar);
+  color: var(--cf-text);
+}
+
+.cf-dealer-nav-active {
+  background: linear-gradient(135deg, #b65200 0%, #d66b0f 100%);
+  color: #fff !important;
+}
+
+.cf-dealer-nav-item:hover:not(.cf-dealer-nav-active) {
+  background: var(--cf-nav-hover);
+  color: #d4af37;
+}
+
 .cf-dealer-header {
-  background: linear-gradient(180deg, #171717 0%, #0f0f0f 100%);
-  color: #ffffff;
+  background: linear-gradient(180deg, var(--cf-header-gradient-start) 0%, var(--cf-header-gradient-end) 100%);
+  color: var(--cf-text);
   border-bottom: 1px solid rgba(212, 175, 55, 0.2);
 }
 
 .cf-dealer-bottom-nav {
-  background: #171717;
+  background: var(--cf-sidebar);
   border-top: 1px solid rgba(212, 175, 55, 0.25);
   padding-bottom: env(safe-area-inset-bottom);
-  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 -4px 24px var(--cf-shadow);
 }
 
 .cf-dealer-tab-active {
   color: #d4af37;
-  background: rgba(182, 82, 0, 0.15);
+  background: var(--cf-tab-active-bg);
 }
 
 .cf-product-card {
-  background: #222222;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--cf-card);
+  border: 1px solid var(--cf-border);
   border-radius: 1rem;
   overflow: hidden;
 }
 
 .cf-dealer-sheet {
-  background: #1a1a1a;
-  color: #ffffff;
+  background: var(--cf-sheet);
+  color: var(--cf-text);
   border-top: 2px solid #d4af37;
+}
+
+/* ── Light mode: remap common hardcoded utility classes ── */
+[data-theme="light"] .cf-auth-card .text-white {
+  color: var(--cf-text);
+}
+
+[data-theme="light"] .cf-auth-card .bg-\[\#171717\] {
+  background-color: var(--cf-bg-elevated) !important;
+}
+
+[data-theme="light"] .cf-admin .text-white:not(.cf-admin-nav-active):not(.cf-admin-nav-active *),
+[data-theme="light"] .cf-dealer .text-white:not(.cf-btn-brand):not(.cf-btn-brand *):not(.cf-admin-nav-active):not(.cf-admin-nav-active *) {
+  color: var(--cf-text);
+}
+
+[data-theme="light"] .cf-admin .text-white\/70,
+[data-theme="light"] .cf-dealer .text-white\/70 {
+  color: var(--cf-text-secondary);
+}
+
+[data-theme="light"] .cf-admin .text-white\/40,
+[data-theme="light"] .cf-dealer .text-white\/40 {
+  color: var(--cf-text-faint);
+}
+
+[data-theme="light"] .cf-admin .border-white\/10,
+[data-theme="light"] .cf-dealer .border-white\/10,
+[data-theme="light"] .cf-auth-card .border-white\/10 {
+  border-color: var(--cf-border);
+}
+
+[data-theme="light"] .cf-admin .border-white\/20,
+[data-theme="light"] .cf-dealer .border-white\/20 {
+  border-color: var(--cf-border-strong);
+}
+
+[data-theme="light"] .cf-admin .bg-\[\#222222\],
+[data-theme="light"] .cf-dealer .bg-\[\#222222\],
+[data-theme="light"] .cf-auth-card.bg-\[\#222222\] {
+  background-color: var(--cf-card) !important;
+}
+
+[data-theme="light"] .cf-admin .bg-\[\#171717\],
+[data-theme="light"] .cf-dealer .bg-\[\#171717\] {
+  background-color: var(--cf-bg-elevated) !important;
+}
+
+[data-theme="light"] .cf-admin .bg-\[\#1a1a1a\],
+[data-theme="light"] .cf-dealer .bg-\[\#1a1a1a\] {
+  background-color: var(--cf-sheet) !important;
+}
+
+[data-theme="light"] .cf-admin .hover\:bg-white\/10:hover,
+[data-theme="light"] .cf-dealer .hover\:bg-white\/10:hover {
+  background-color: var(--cf-nav-hover) !important;
+}
+
+[data-theme="light"] .cf-admin .divide-white\/5 > :not(:last-child),
+[data-theme="light"] .cf-dealer .divide-white\/5 > :not(:last-child) {
+  border-color: var(--cf-border);
+}
+
+[data-theme="light"] .cf-dealer .bg-black\/70 {
+  background-color: var(--cf-overlay) !important;
+}
+
+/* Bright mode: sharper text (fix dull neutral grays) */
+[data-theme="light"] .cf-page .text-neutral-400,
+[data-theme="light"] .cf-admin .text-neutral-400,
+[data-theme="light"] .cf-dealer .text-neutral-400,
+[data-theme="light"] .cf-auth-card .text-neutral-400 {
+  color: var(--cf-text-muted) !important;
+}
+
+[data-theme="light"] .cf-page .text-neutral-500,
+[data-theme="light"] .cf-admin .text-neutral-500,
+[data-theme="light"] .cf-dealer .text-neutral-500,
+[data-theme="light"] .cf-auth-card .text-neutral-500 {
+  color: var(--cf-text-secondary) !important;
+}
+
+[data-theme="light"] .cf-page .text-neutral-300,
+[data-theme="light"] .cf-admin .text-neutral-300,
+[data-theme="light"] .cf-dealer .text-neutral-300 {
+  color: var(--cf-text-secondary) !important;
+}
+
+[data-theme="light"] .cf-admin h1,
+[data-theme="light"] .cf-admin h2,
+[data-theme="light"] .cf-admin h3,
+[data-theme="light"] .cf-dealer h1,
+[data-theme="light"] .cf-dealer h2,
+[data-theme="light"] .cf-dealer h3 {
+  color: var(--cf-text);
+}
+
+[data-theme="light"] .cf-dealer .text-neutral-500.hover\:text-neutral-300 {
+  color: var(--cf-text-muted);
+}
+
+/* ── Admin data tables — readable in both themes ── */
+.cf-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  text-align: left;
+}
+
+.cf-admin-table thead th {
+  padding: 1rem 1.25rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cf-text-muted);
+  background: color-mix(in srgb, var(--cf-bg-elevated) 92%, var(--cf-text) 8%);
+  border-bottom: 1px solid var(--cf-border);
+}
+
+.cf-admin-table tbody {
+  color: var(--cf-text-secondary);
+}
+
+.cf-admin-table tbody tr {
+  border-bottom: 1px solid var(--cf-border);
+  transition: background 0.15s;
+}
+
+.cf-admin-table tbody tr:hover {
+  background: var(--cf-nav-hover);
+}
+
+.cf-admin-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.cf-td-title {
+  color: var(--cf-text);
+  font-weight: 600;
+  font-size: 0.875rem;
+  display: block;
+}
+
+.cf-td-value {
+  color: var(--cf-text-secondary);
+  font-weight: 500;
+}
+
+.cf-td-mono {
+  color: var(--cf-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.cf-td-mono-upper {
+  text-transform: uppercase;
+}
+
+.cf-td-meta {
+  color: var(--cf-text-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.cf-td-date {
+  color: var(--cf-text-secondary);
+  white-space: nowrap;
+}
+
+.cf-td-empty {
+  padding: 3rem 1.25rem;
+  text-align: center;
+  color: var(--cf-text-muted);
+  font-weight: 600;
+}
+
+.cf-form-label {
+  color: var(--cf-text-muted);
+  font-weight: 700;
+}
+
+/* Remap hardcoded zinc grays inside themed shells */
+.cf-admin .text-zinc-300,
+.cf-dealer .text-zinc-300 {
+  color: var(--cf-text-secondary) !important;
+}
+
+.cf-admin .text-zinc-400,
+.cf-dealer .text-zinc-400 {
+  color: var(--cf-text-muted) !important;
+}
+
+.cf-admin .text-zinc-500,
+.cf-dealer .text-zinc-500 {
+  color: var(--cf-text-muted) !important;
+}
+
+.cf-admin-table .cf-td-title,
+.cf-admin-table .cf-td-mono {
+  color: var(--cf-text) !important;
+}
+
+.cf-admin-table .font-semibold.text-white,
+.cf-admin-table .text-white.text-sm,
+.cf-admin-table td.text-white {
+  color: var(--cf-text) !important;
+}
+
+.cf-admin .text-neutral-400,
+.cf-dealer .text-neutral-400 {
+  color: var(--cf-text-muted) !important;
+}
+
+.cf-admin .text-neutral-500,
+.cf-dealer .text-neutral-500 {
+  color: var(--cf-text-secondary) !important;
 }
 
 @keyframes fade-in {

@@ -4,6 +4,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { DealerProfile } from './types';
 import Login from './components/Login';
 import Toast, { ToastMessage } from './components/Toast';
+import ThemeToggle from './components/ThemeToggle';
 import { Server } from 'lucide-react';
 
 const Register = lazy(() => import('./components/Register'));
@@ -12,7 +13,7 @@ const DealerDashboard = lazy(() => import('./components/DealerDashboard'));
 
 function ScreenLoader() {
   return (
-    <div className="grow flex items-center justify-center bg-[#0f0f0f]">
+    <div className="grow flex items-center justify-center cf-page">
       <div className="w-8 h-8 border-2 border-[#d4af37]/30 border-t-[#d4af37] rounded-full animate-spin" />
     </div>
   );
@@ -33,7 +34,7 @@ console.error('App render error:', error, info);
   render() {
     if (this.state.error) {
       return (
-        <div className="min-h-screen bg-[#0f0f0f] text-white flex flex-col items-center justify-center p-6 text-center">
+        <div className="min-h-screen cf-page flex flex-col items-center justify-center p-6 text-center">
           <p className="text-red-400 font-semibold mb-2">Something went wrong loading the dashboard.</p>
           <p className="text-neutral-400 text-sm mb-4 max-w-md">{this.state.error.message}</p>
           <button
@@ -152,7 +153,10 @@ export default function App() {
 
   return (
     <AppErrorBoundary>
-    <div className="min-h-screen bg-[#0f0f0f] text-white flex flex-col antialiased">
+    <div className="min-h-screen cf-page flex flex-col antialiased">
+      <div className="cf-theme-corner">
+        <ThemeToggle />
+      </div>
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       {networkError && (
@@ -171,7 +175,7 @@ export default function App() {
       )}
 
       {currentScreen === 'login' && (
-        <div className="grow flex flex-col items-center justify-center p-4 py-12 bg-[#0f0f0f]">
+        <div className="grow flex flex-col items-center justify-center p-4 py-12 cf-page">
           <Login
             onLoginSuccess={handleLoginSuccess}
             onGoToRegister={() => setCurrentScreen('register')}
@@ -181,7 +185,7 @@ export default function App() {
 
       {currentScreen === 'register' && (
         <Suspense fallback={<ScreenLoader />}>
-          <div className="grow flex flex-col items-center justify-center p-4 py-8 bg-[#0f0f0f]">
+          <div className="grow flex flex-col items-center justify-center p-4 py-8 cf-page">
             <Register onBackToLogin={() => setCurrentScreen('login')} />
           </div>
         </Suspense>

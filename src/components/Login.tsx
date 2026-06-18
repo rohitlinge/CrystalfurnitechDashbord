@@ -58,12 +58,13 @@ export default function Login({
 
   return (
     <div className="w-full max-w-md space-y-5">
-      <div className="text-center space-y-3">
-        <BrandLogo variant="light" size="lg" subtitle="B2B Dealer Portal" className="justify-center" />
-        <p className="text-sm text-neutral-400">Sign in to access your wholesale dashboard</p>
+      <div className="text-center space-y-2">
+        <BrandLogo size="lg" className="mx-auto" />
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-cf-muted">B2B Dealer Portal</p>
+        <p className="text-sm text-cf-secondary">Sign in to access your wholesale dashboard</p>
       </div>
 
-      <div className="bg-[#222222] border border-white/10 rounded-2xl shadow-xl overflow-hidden">
+      <div className="cf-auth-card rounded-2xl overflow-hidden">
         <div className="h-1 bg-gradient-to-r from-[#b65200] via-[#d4af37] to-[#b65200]" />
         <div className="p-6 space-y-4">
           {statusMessage && (

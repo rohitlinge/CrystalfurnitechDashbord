@@ -66,7 +66,8 @@ export interface StockRequirement {
   productName: string;
   quantityRequested: number;
   requestedDate: string;
-  status: 'Pending' | 'Fulfilled' | 'Cancelled';
+  /** Indent → order pipeline: Pending → Approved → Production → Packed → Dispatched → Delivered */
+  status: 'Pending' | 'Approved' | 'Production' | 'Packed' | 'Dispatched' | 'Delivered' | 'Cancelled' | 'Fulfilled';
   notes?: string;
   /** Order value in INR (wholesale price × quantity) */
   orderValue?: number;

@@ -69,7 +69,7 @@ service cloud.firestore {
              data.productId is string && data.productId.size() > 0 &&
              data.productName is string && data.productName.size() >= 3 &&
              data.dealerId is string && data.dealerId.size() > 0 &&
-             data.status in ['Pending', 'Fulfilled', 'Cancelled'] &&
+             data.status in ['Pending', 'Approved', 'Production', 'Packed', 'Dispatched', 'Delivered', 'Cancelled', 'Fulfilled'] &&
              (!('orderValue' in data) || ((data.orderValue is int || data.orderValue is number) && data.orderValue >= 0));
     }
 

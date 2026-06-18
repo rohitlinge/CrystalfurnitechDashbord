@@ -1,8 +1,5 @@
 interface BrandLogoProps {
-  variant?: 'light' | 'dark';
   size?: 'sm' | 'md' | 'lg';
-  showText?: boolean;
-  subtitle?: string;
   className?: string;
 }
 
@@ -12,33 +9,14 @@ const sizes = {
   lg: 'h-14',
 };
 
-export default function BrandLogo({
-  variant = 'dark',
-  size = 'md',
-  showText = true,
-  subtitle,
-  className = '',
-}: BrandLogoProps) {
-  const textColor = variant === 'light' ? 'text-white' : 'text-black';
-  const subColor = variant === 'light' ? 'text-[#d4af37]/80' : 'text-neutral-500';
-
+export default function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div className={`cf-logo-wrap inline-flex items-center justify-center shrink-0 ${className}`}>
       <img
         src="/crystal-furnitech-logo.webp"
         alt="Crystal Furnitech"
-        className={`${sizes[size]} w-auto object-contain shrink-0`}
+        className={`${sizes[size]} w-auto object-contain`}
       />
-      {showText && (
-        <div className="min-w-0">
-          <p className={`font-serif italic text-base sm:text-lg font-semibold leading-tight ${textColor}`}>
-            Crystal Furnitech
-          </p>
-          {subtitle && (
-            <p className={`text-[10px] font-semibold uppercase tracking-widest ${subColor}`}>{subtitle}</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }

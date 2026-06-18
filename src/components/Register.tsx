@@ -103,7 +103,7 @@ export default function Register({ onBackToLogin }: RegisterProps) {
 
   if (registeredSuccessfully) {
     return (
-      <div className="w-full max-w-2xl bg-[#222222] rounded-xl border border-white/10 overflow-hidden shadow-2xl">
+      <div className="w-full max-w-2xl cf-auth-card rounded-xl overflow-hidden">
         <div className="p-8 sm:p-12 text-center flex flex-col items-center">
           <motion.div 
             initial={{ scale: 0.5, opacity: 0 }}
@@ -143,8 +143,8 @@ export default function Register({ onBackToLogin }: RegisterProps) {
   }
 
   return (
-    <div className="w-full max-w-3xl bg-[#222222] rounded-xl border border-white/10 overflow-hidden shadow-2xl">
-      <div className="bg-[#171717] p-6 sm:p-8 text-white relative border-b border-[#d4af37]/20">
+    <div className="w-full max-w-3xl cf-auth-card rounded-xl overflow-hidden">
+      <div className="bg-[var(--cf-bg-elevated)] p-6 sm:p-8 relative border-b border-[#d4af37]/20">
         <button 
           id="btn-back-login"
           onClick={onBackToLogin}
@@ -153,8 +153,9 @@ export default function Register({ onBackToLogin }: RegisterProps) {
           <ArrowLeft className="w-4 h-4" />
           Back
         </button>
-        <div className="text-center pt-8 flex flex-col items-center">
-          <BrandLogo variant="light" size="lg" subtitle="Dealer Registration" />
+        <div className="text-center pt-8 flex flex-col items-center gap-2">
+          <BrandLogo size="lg" />
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-cf-muted">Dealer Registration</p>
         </div>
       </div>
 

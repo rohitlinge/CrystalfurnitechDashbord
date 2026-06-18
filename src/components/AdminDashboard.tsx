@@ -11,6 +11,15 @@ import BrandLogo from './BrandLogo';
 import AdminAnalytics from './AdminAnalytics';
 import Toast, { ToastMessage } from './Toast';
 import DealerLedger from './DealerLedger';
+import OrderProgress from './OrderProgress';
+import {
+  orderAdvanceLabel,
+  orderStatusBadgeClass,
+  orderStatusLabel,
+  canAdminCancel,
+  isActiveOrder,
+  normalizeOrderStatus,
+} from '../orders';
 
 interface AdminDashboardProps {
   adminUser: DealerProfile;
@@ -386,25 +395,36 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
     setReasonModal(null);
   };
 
-  const handleUpdateRequirementStatus = async (reqId: string, nextStatus: 'Fulfilled' | 'Cancelled') => {
+  const handleAdvanceOrder = async (reqId: string) => {
     const reqBefore = requirements.find((r) => r.id === reqId);
-setFulfillingReqId(reqId);
+    setFulfillingReqId(reqId);
     try {
-      await DBService.updateStockRequirementStatus(reqId, nextStatus);
-      const [allProds] = await Promise.all([
-        DBService.getProducts(),
-      ]);
+      const nextStatus = await DBService.advanceOrderStatus(reqId);
+      const [allProds] = await Promise.all([DBService.getProducts()]);
       const productAfter = reqBefore ? allProds.find((p) => p.id === reqBefore.productId) : undefined;
-await fetchData();
-      showToast(
-        nextStatus === 'Fulfilled'
-          ? `Request fulfilled. Stock updated to ${productAfter?.availableStock ?? '—'} units.`
-          : 'Stock request cancelled.',
-        'info'
-      );
+      await fetchData();
+      const stockNote = nextStatus === 'Packed' && productAfter
+        ? ` Stock updated to ${productAfter.availableStock} units.`
+        : '';
+      showToast(`Order moved to ${nextStatus}.${stockNote}`, 'info');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to update stock request.';
-console.error(e);
+      const msg = e instanceof Error ? e.message : 'Failed to advance order.';
+      console.error(e);
+      showToast(msg);
+    } finally {
+      setFulfillingReqId(null);
+    }
+  };
+
+  const handleCancelOrder = async (reqId: string) => {
+    setFulfillingReqId(reqId);
+    try {
+      await DBService.updateOrderStatus(reqId, 'Cancelled');
+      await fetchData();
+      showToast('Order cancelled.', 'info');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to cancel order.';
+      console.error(e);
       showToast(msg);
     } finally {
       setFulfillingReqId(null);
@@ -414,8 +434,8 @@ console.error(e);
   const handleDeleteRequirement = (reqId: string) => {
     setConfirmModal({
       isOpen: true,
-      title: "Delete Stock Indent",
-      message: "Are you sure you want to permanently delete this fulfilled or cancelled stock requirement record? This will remove it from historical listings permanently.",
+      title: "Delete Order",
+      message: "Are you sure you want to permanently delete this completed or cancelled order record?",
       actionLabel: "Permanently Delete",
       onConfirm: async () => {
         try {
@@ -704,7 +724,7 @@ console.error(e);
   const navItems = [
     { id: 'analytics' as const, label: 'Analytics', icon: BarChart3, count: null as number | null },
     { id: 'dealers' as const, label: 'Dealers', icon: Users, count: dealers.length },
-    { id: 'requirements' as const, label: 'Stock Requests', icon: ClipboardList, count: requirements.length },
+    { id: 'requirements' as const, label: 'Orders', icon: ClipboardList, count: requirements.filter((r) => isActiveOrder(r.status)).length },
     { id: 'categories' as const, label: 'Categories', icon: Layers, count: categories.length },
     { id: 'products' as const, label: 'Products', icon: Package, count: products.length },
   ];
@@ -712,17 +732,18 @@ console.error(e);
   const tabLabels: Record<typeof activeTab, string> = {
     analytics: 'Analytics',
     dealers: 'Dealers',
-    requirements: 'Stock Requests',
+    requirements: 'Order Management',
     categories: 'Categories',
     products: 'Products',
   };
 
   return (
-    <div className="cf-admin min-h-screen flex text-white">
+    <div className="cf-admin min-h-screen flex">
       <Toast toast={toast} onDismiss={() => setToast(null)} />
       <aside className="cf-admin-sidebar hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen border-r border-white/10">
-        <div className="p-5 border-b border-white/10">
-          <BrandLogo variant="light" size="md" subtitle="Admin Console" />
+        <div className="p-5 border-b border-white/10 flex flex-col items-center gap-1.5">
+          <BrandLogo size="md" />
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-cf-muted">Admin Console</p>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {navItems.map(({ id, label, icon: Icon, count }) => (
@@ -768,8 +789,11 @@ console.error(e);
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile / tablet top bar */}
-        <header className="lg:hidden cf-admin-sidebar px-4 py-3 flex items-center justify-between sticky top-0 z-20 border-b border-white/10">
-          <BrandLogo variant="light" size="sm" subtitle="Admin" />
+        <header className="lg:hidden cf-admin-sidebar px-4 py-3 flex items-center justify-between sticky top-0 z-20 border-b border-white/10 pr-14">
+          <div className="flex items-center gap-2">
+            <BrandLogo size="sm" />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-cf-muted">Admin</span>
+          </div>
           <button type="button" onClick={onLogout} className="p-2 rounded-lg border border-white/20">
             <LogOut className="w-4 h-4" />
           </button>
@@ -780,9 +804,9 @@ console.error(e);
         <div className="hidden lg:flex items-center justify-between pb-2 border-b border-white/10">
           <div>
             <h1 id="admin-h1" className="text-2xl font-semibold text-white">{tabLabels[activeTab]}</h1>
-            <p id="admin-sub" className="text-sm text-neutral-400">Crystal Furnitech · Luxury backoffice</p>
+            <p id="admin-sub" className="text-sm text-cf-secondary">Crystal Furnitech · Luxury backoffice</p>
           </div>
-          <BrandLogo variant="light" size="sm" showText={false} />
+          <BrandLogo size="sm" />
         </div>
 
         {/* Mobile tab nav */}
@@ -797,7 +821,7 @@ console.error(e);
                 className={`py-2 px-3 sm:px-4 rounded-md font-semibold text-[11px] sm:text-xs tracking-wide transition flex items-center gap-2 cursor-pointer ${
                   activeTab === id
                     ? 'bg-gradient-to-r from-[#b65200] to-[#d66b0f] text-white shadow-md'
-                    : 'text-neutral-400 hover:text-[#d4af37]'
+                    : 'text-cf-muted hover:text-[#d4af37]'
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -809,13 +833,13 @@ console.error(e);
           {activeTab !== 'analytics' && (
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative grow sm:w-60">
-              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-3.5" />
+              <Search className="w-4 h-4 text-cf-muted absolute left-3 top-3.5" />
               <input 
                 id="admin-search"
                 type="text"
                 placeholder={
                   activeTab === 'dealers' ? "Search dealers..." : 
-                  activeTab === 'requirements' ? "Search stock requests..." :
+                  activeTab === 'requirements' ? "Search orders..." :
                   activeTab === 'categories' ? "Search categories..." : 
                   "Search SKU, product material, color..."
                 }
@@ -862,7 +886,7 @@ console.error(e);
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <span className="text-[10px] text-neutral-400 font-semibold block uppercase">All Dealers</span>
+              <span className="text-[10px] text-cf-muted font-semibold block uppercase">All Dealers</span>
               <span className="text-2xl font-semibold text-white">{statusCounts.total}</span>
             </div>
           </div>
@@ -913,13 +937,13 @@ console.error(e);
         <div className="hidden lg:flex flex-col gap-4 cf-admin-card p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative grow sm:w-60">
-              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-3.5" />
+              <Search className="w-4 h-4 text-cf-muted absolute left-3 top-3.5" />
               <input
                 id="admin-search-desktop"
                 type="text"
                 placeholder={
                   activeTab === 'dealers' ? "Search dealers..." :
-                  activeTab === 'requirements' ? "Search stock requests..." :
+                  activeTab === 'requirements' ? "Search orders..." :
                   activeTab === 'categories' ? "Search categories..." :
                   "Search SKU, product material, color..."
                 }
@@ -956,62 +980,62 @@ console.error(e);
             
             /* --- Dealers Management Tab Panel --- */
             <div className="overflow-x-auto min-w-full">
-              <table className="min-w-full text-left border-collapse text-xs">
+              <table className="cf-admin-table min-w-full">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
-                    <th className="py-4 px-5">Company Details</th>
-                    <th className="py-4 px-5">Contact Details</th>
-                    <th className="py-4 px-5">GST Identification</th>
-                    <th className="py-4 px-5">City & State</th>
-                    <th className="py-4 px-5">Registered On</th>
-                    <th className="py-4 px-5">Credit</th>
-                    <th className="py-4 px-5">Status</th>
-                    <th className="py-4 px-5 text-right">Backoffice Actions</th>
+                  <tr>
+                    <th>Company Details</th>
+                    <th>Contact Details</th>
+                    <th>GST Identification</th>
+                    <th>City & State</th>
+                    <th>Registered On</th>
+                    <th>Credit</th>
+                    <th>Status</th>
+                    <th className="text-right">Backoffice Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/10 text-neutral-500">
+                <tbody>
                    {filteredDealers.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="py-12 text-center text-neutral-500 font-semibold">
-                        <Users className="w-10 h-10 mx-auto text-[#27272a] mb-2" />
+                      <td colSpan={8} className="cf-td-empty">
+                        <Users className="w-10 h-10 mx-auto text-cf-muted mb-2 opacity-40" />
                         No dealer accounts match the search criteria.
                       </td>
                     </tr>
                   ) : (
                     filteredDealers.map((dl) => (
-                      <tr key={dl.uid} className="hover:bg-zinc-950/20 transition">
+                      <tr key={dl.uid}>
                         
                         {/* Company Detail Column */}
                         <td className="py-4 px-5">
                           <div>
-                            <span className="font-semibold text-white block text-sm">{dl.companyName}</span>
-                            <span className="text-neutral-500 text-[10px] block font-medium mt-0.5">Owner: {dl.ownerName}</span>
+                            <span className="cf-td-title">{dl.companyName}</span>
+                            <span className="cf-td-meta block mt-0.5">Owner: {dl.ownerName}</span>
                           </div>
                         </td>
 
                         {/* Contact Details */}
                         <td className="py-4 px-5">
                           <div className="space-y-0.5">
-                            <span className="block font-medium text-zinc-300">{dl.email}</span>
-                            <span className="block text-neutral-500 text-[10px]">Mobile: +91 {dl.mobile}</span>
+                            <span className="cf-td-value block">{dl.email}</span>
+                            <span className="cf-td-meta block">Mobile: +91 {dl.mobile}</span>
                           </div>
                         </td>
 
                         {/* GST Number */}
-                        <td className="py-4 px-5 font-mono text-zinc-300 font-semibold uppercase">
+                        <td className="py-4 px-5 cf-td-mono cf-td-mono-upper">
                           {dl.gstNumber}
                         </td>
 
                         {/* City/State */}
                         <td className="py-4 px-5">
                           <div>
-                            <span className="font-semibold text-zinc-300 block">{dl.city}</span>
-                            <span className="text-neutral-500 text-[10px] block">{dl.state}</span>
+                            <span className="cf-td-value font-semibold block">{dl.city}</span>
+                            <span className="cf-td-meta block">{dl.state}</span>
                           </div>
                         </td>
 
                         {/* Registration Date */}
-                        <td className="py-4 px-5 text-zinc-400 whitespace-nowrap">
+                        <td className="py-4 px-5 cf-td-date">
                           {new Date(dl.registrationDate).toLocaleDateString('en-IN', {
                             day: 'numeric',
                             month: 'short',
@@ -1025,9 +1049,9 @@ console.error(e);
                             const credit = getDealerCreditInfo(dl);
                             return (
                               <div className="text-[10px] space-y-0.5">
-                                <span className="block text-zinc-300">Avail: <strong className="text-[#d4af37]">{formatINR(credit.availableCredit)}</strong></span>
-                                <span className="block text-neutral-500">Out: {formatINR(credit.outstandingBalance)} / {formatINR(credit.creditLimit)}</span>
-                                <span className="block text-neutral-500">{credit.creditDays} days</span>
+                                <span className="cf-td-value block">Avail: <strong className="text-[#d4af37]">{formatINR(credit.availableCredit)}</strong></span>
+                                <span className="cf-td-meta block">Out: {formatINR(credit.outstandingBalance)} / {formatINR(credit.creditLimit)}</span>
+                                <span className="cf-td-meta block">{credit.creditDays} days</span>
                               </div>
                             );
                           })()}
@@ -1122,7 +1146,7 @@ console.error(e);
                               type="button"
                               title="Delete Dealer Record"
                               onClick={() => handleDeleteDealer(dl.uid, dl.companyName)}
-                              className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white hover:border-transparent text-neutral-500 border border-white/10 rounded-lg cursor-pointer transition duration-200"
+                              className="p-1.5 bg-transparent hover:bg-[#ef4444] hover:text-white hover:border-transparent text-cf-muted border border-white/10 rounded-lg cursor-pointer transition duration-200"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1141,50 +1165,57 @@ console.error(e);
 
           {activeTab === 'requirements' && (
             
-            /* --- Wholesale Stock Requests Tab Panel --- */
+            /* --- Order Management Tab Panel --- */
             <div className="overflow-x-auto min-w-full">
-              <table className="min-w-full text-left border-collapse text-xs">
+              <div className="mb-4 hidden lg:block">
+                <p className="text-xs text-cf-secondary">
+                  Indent → Order workflow: Pending → Approved → Production → Packed → Dispatched → Delivered
+                </p>
+              </div>
+              <table className="cf-admin-table min-w-full">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
-                    <th className="py-4 px-5">Partner Dealer</th>
-                    <th className="py-4 px-5">Product Details</th>
-                    <th className="py-4 px-5 text-center">Qty / Indent</th>
-                    <th className="py-4 px-5">Sourcing Value</th>
-                    <th className="py-4 px-5">Date Posted</th>
-                    <th className="py-4 px-5">Deal Status</th>
-                    <th className="py-4 px-5 text-right">Fulfillment Actions</th>
+                  <tr>
+                    <th>Partner Dealer</th>
+                    <th>Product Details</th>
+                    <th className="text-center">Qty</th>
+                    <th>Order Value</th>
+                    <th>Date Posted</th>
+                    <th>Order Pipeline</th>
+                    <th className="text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/10 text-neutral-500">
+                <tbody>
                   {filteredRequirements.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-neutral-500 font-semibold">
-                        <ClipboardList className="w-10 h-10 mx-auto text-[#27272a] mb-2" />
-                        No wholesale stock requests found.
+                      <td colSpan={7} className="cf-td-empty">
+                        <ClipboardList className="w-10 h-10 mx-auto text-cf-muted mb-2 opacity-40" />
+                        No orders found.
                       </td>
                     </tr>
                   ) : (
                     filteredRequirements.map((rq) => {
-                      const totalEstimatedVal = rq.quantityRequested * 15000; // estimated wholesale rate
+                      const normalizedStatus = normalizeOrderStatus(rq.status);
+                      const advanceLabel = orderAdvanceLabel(rq.status);
+                      const orderVal = rq.orderValue || 0;
 
                       return (
-                        <tr key={rq.id} className="hover:bg-zinc-950/20 transition">
+                        <tr key={rq.id}>
                           
                           {/* Dealer Company */}
                           <td className="py-4 px-5">
                             <div>
-                              <span className="font-semibold text-white block text-sm">{rq.dealerCompanyName}</span>
-                              <span className="text-[10px] text-zinc-400 font-semibold block mt-0.5">Dealer Ref: {rq.dealerId.substring(0, 8)}...</span>
+                              <span className="cf-td-title">{rq.dealerCompanyName}</span>
+                              <span className="cf-td-meta block mt-0.5">Dealer Ref: {rq.dealerId.substring(0, 8)}...</span>
                             </div>
                           </td>
 
                           {/* Product requested info */}
                           <td className="py-4 px-5">
                             <div>
-                              <span className="font-semibold text-zinc-300 block text-xs">{rq.productName}</span>
-                              <span className="text-[10px] text-zinc-500 block font-mono mt-0.5">ID: {rq.productId}</span>
+                              <span className="cf-td-value font-semibold block text-xs">{rq.productName}</span>
+                              <span className="cf-td-meta block font-mono mt-0.5">ID: {rq.productId}</span>
                               {rq.notes && (
-                                <p className="text-[10px] text-zinc-400 italic mt-1 bg-[#171717] border border-white/10 p-1 rounded font-sans max-w-xs whitespace-normal">
+                                <p className="cf-td-meta italic mt-1 bg-[#171717] border border-white/10 p-1 rounded font-sans max-w-xs whitespace-normal">
                                   "{rq.notes}"
                                 </p>
                               )}
@@ -1192,17 +1223,17 @@ console.error(e);
                           </td>
 
                           {/* Quantity */}
-                          <td className="py-4 px-5 text-center font-bold text-white text-sm">
+                          <td className="py-4 px-5 text-center cf-td-title text-sm">
                             {rq.quantityRequested} units
                           </td>
 
-                          {/* Est Stock Value */}
-                          <td className="py-4 px-5 font-mono font-semibold text-white">
-                            ₹{(totalEstimatedVal).toLocaleString('en-IN')}
+                          {/* Order Value */}
+                          <td className="py-4 px-5 cf-td-mono">
+                            {formatINR(orderVal)}
                           </td>
 
                           {/* Date request */}
-                          <td className="py-4 px-5 text-zinc-400 whitespace-nowrap">
+                          <td className="py-4 px-5 cf-td-date">
                             {new Date(rq.requestedDate).toLocaleDateString('en-IN', {
                               day: 'numeric',
                               month: 'short',
@@ -1212,51 +1243,54 @@ console.error(e);
                             })}
                           </td>
 
-                          {/* Status */}
-                          <td className="py-4 px-5">
-                            <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold ${
-                              rq.status === 'Fulfilled'
-                                ? 'bg-[#10b981]/10 text-[#10b981] border border-[#10b981]/20'
-                                : rq.status === 'Cancelled'
-                                ? 'bg-[#ef4444]/10 text-[#ef4444] border border-[#ef4444]/20'
-                                : 'bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20 animate-pulse'
-                            }`}>
-                              {rq.status}
-                            </span>
+                          {/* Order pipeline */}
+                          <td className="py-4 px-5 min-w-[200px]">
+                            <div className="space-y-2">
+                              <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold uppercase ${orderStatusBadgeClass(rq.status)}`}>
+                                {orderStatusLabel(rq.status)}
+                              </span>
+                              <OrderProgress status={rq.status} compact className="max-w-[180px]" />
+                            </div>
                           </td>
 
-                          {/* Backoffice updates for Stock requests */}
+                          {/* Order actions */}
                           <td className="py-4 px-5 text-right whitespace-nowrap">
-                            {rq.status === 'Pending' ? (
-                              <div className="flex justify-end gap-1.5">
-                                <button
-                                  id={`btn-fulfill-${rq.id}`}
-                                  type="button"
-                                  disabled={fulfillingReqId === rq.id}
-                                  onClick={() => handleUpdateRequirementStatus(rq.id, 'Fulfilled')}
-                                  className="py-1 px-2.5 bg-transparent hover:bg-[#10b981]/20 hover:text-[#10b981] border border-white/10 text-white font-semibold text-[10px] rounded-lg transition disabled:opacity-50"
-                                >
-                                  {fulfillingReqId === rq.id ? 'Processing...' : 'Fulfill Request'}
-                                </button>
-                                <button
-                                  id={`btn-cancel-${rq.id}`}
-                                  type="button"
-                                  disabled={fulfillingReqId === rq.id}
-                                  onClick={() => handleUpdateRequirementStatus(rq.id, 'Cancelled')}
-                                  className="py-1 px-2.5 bg-transparent hover:bg-[#ef4444]/20 hover:text-[#ef4444] border border-white/10 text-[#ef4444] font-semibold text-[10px] rounded-lg transition disabled:opacity-50"
-                                >
-                                  Reject/Cancel
-                                </button>
+                            {isActiveOrder(rq.status) ? (
+                              <div className="flex justify-end gap-1.5 flex-wrap">
+                                {advanceLabel && (
+                                  <button
+                                    id={`btn-advance-${rq.id}`}
+                                    type="button"
+                                    disabled={fulfillingReqId === rq.id}
+                                    onClick={() => handleAdvanceOrder(rq.id)}
+                                    className="py-1 px-2.5 bg-transparent hover:bg-[#10b981]/20 hover:text-[#10b981] border border-white/10 text-white font-semibold text-[10px] rounded-lg transition disabled:opacity-50"
+                                  >
+                                    {fulfillingReqId === rq.id ? 'Processing...' : advanceLabel}
+                                  </button>
+                                )}
+                                {canAdminCancel(rq.status) && (
+                                  <button
+                                    id={`btn-cancel-${rq.id}`}
+                                    type="button"
+                                    disabled={fulfillingReqId === rq.id}
+                                    onClick={() => handleCancelOrder(rq.id)}
+                                    className="py-1 px-2.5 bg-transparent hover:bg-[#ef4444]/20 hover:text-[#ef4444] border border-white/10 text-[#ef4444] font-semibold text-[10px] rounded-lg transition disabled:opacity-50"
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
                               </div>
                             ) : (
                               <div className="flex justify-end items-center gap-2">
-                                <span className="text-[10px] text-zinc-500 font-medium">Completed</span>
+                                <span className="text-[10px] text-cf-muted font-medium">
+                                  {normalizedStatus === 'Delivered' ? 'Completed' : 'Cancelled'}
+                                </span>
                                 <button
                                   id={`btn-delete-req-${rq.id}`}
                                   type="button"
                                   onClick={() => handleDeleteRequirement(rq.id)}
                                   className="p-1 px-2 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 border border-white/10 hover:border-red-500/20 rounded-lg transition flex items-center gap-1 text-[10px] font-bold cursor-pointer"
-                                  title="Delete Requirement Record"
+                                  title="Delete Order Record"
                                 >
                                   <Trash2 className="w-3 h-3" />
                                   Delete
@@ -1279,41 +1313,43 @@ console.error(e);
             
             /* --- Category Management Panel (Step 3) --- */
             <div className="overflow-x-auto min-w-full animate-fade-in">
-              <table className="min-w-full text-left border-collapse text-xs">
+              <table className="cf-admin-table min-w-full">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
-                    <th className="py-4 px-5">Category Name</th>
-                    <th className="py-4 px-5">Description</th>
-                    <th className="py-4 px-5">Date Created</th>
-                    <th className="py-4 px-5">Status</th>
-                    <th className="py-4 px-5 text-right">Backoffice CRM Actions</th>
+                  <tr>
+                    <th>Category Name</th>
+                    <th>Description</th>
+                    <th>Date Created</th>
+                    <th>Status</th>
+                    <th className="text-right">Backoffice CRM Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/10 text-neutral-500">
+                <tbody>
                   {filteredCategories.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-12 text-center text-neutral-500 font-semibold">
-                        <Layers className="w-10 h-10 mx-auto text-[#27272a] mb-2" />
+                      <td colSpan={5} className="cf-td-empty">
+                        <Layers className="w-10 h-10 mx-auto text-cf-muted mb-2 opacity-40" />
                         No categories found. Click 'Add Category' to create one.
                       </td>
                     </tr>
                   ) : (
                     filteredCategories.map((cat) => (
-                      <tr key={cat.id} className="hover:bg-zinc-950/20 transition">
+                      <tr key={cat.id}>
                         
                         {/* Category Name */}
                         <td className="py-4 px-5">
-                          <span className="font-semibold text-white block text-sm">{cat.name}</span>
-                          <span className="text-[10px] text-zinc-400 font-mono block mt-0.5">ID: {cat.id}</span>
+                          <span className="cf-td-title">{cat.name}</span>
+                          <span className="cf-td-meta font-mono block mt-0.5">ID: {cat.id}</span>
                         </td>
 
                         {/* Description */}
-                        <td className="py-4 px-5 max-w-xs whitespace-normal text-zinc-300 font-sans">
-                          {cat.description || <span className="text-zinc-500 italic">No description provided</span>}
+                        <td className="py-4 px-5 max-w-xs whitespace-normal font-sans">
+                          {cat.description
+                            ? <span className="cf-td-value">{cat.description}</span>
+                            : <span className="cf-td-meta italic">No description provided</span>}
                         </td>
 
                         {/* Date Created */}
-                        <td className="py-4 px-5 text-zinc-400 font-mono font-medium">
+                        <td className="py-4 px-5 cf-td-date font-mono font-medium">
                           {cat.createdDate ? new Date(cat.createdDate).toLocaleDateString('en-IN', {
                             day: 'numeric', month: 'short', year: 'numeric'
                           }) : '-'}
@@ -1387,22 +1423,22 @@ console.error(e);
             
             /* --- Product Management Panel (Step 4) --- */
             <div className="overflow-x-auto min-w-full animate-fade-in">
-              <table className="min-w-full text-left border-collapse text-xs">
+              <table className="cf-admin-table min-w-full">
                 <thead>
-                  <tr className="bg-zinc-950/40 border-b border-white/10 text-neutral-500 uppercase font-bold tracking-wider">
-                    <th className="py-4 px-5">Product Details</th>
-                    <th className="py-4 px-5">Category & SKU</th>
-                    <th className="py-4 px-5">Wholesale Price</th>
-                    <th className="py-4 px-5">Inventory Stock & Status</th>
-                    <th className="py-4 px-5">Created Date</th>
-                    <th className="py-4 px-5 text-right">Backoffice CRM Actions</th>
+                  <tr>
+                    <th>Product Details</th>
+                    <th>Category & SKU</th>
+                    <th>Wholesale Price</th>
+                    <th>Inventory Stock & Status</th>
+                    <th>Created Date</th>
+                    <th className="text-right">Backoffice CRM Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/10 text-neutral-500">
+                <tbody>
                   {filteredProducts.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-neutral-500 font-semibold">
-                        <Package className="w-10 h-10 mx-auto text-[#27272a] mb-2" />
+                      <td colSpan={6} className="cf-td-empty">
+                        <Package className="w-10 h-10 mx-auto text-cf-muted mb-2 opacity-40" />
                         No product items found. Click 'Add Product' to establish a B2B catalog item.
                       </td>
                     </tr>
@@ -1410,7 +1446,7 @@ console.error(e);
                     filteredProducts.map((p) => {
                       const allPics = p.images || (p.image ? [p.image] : []);
                       return (
-                        <tr key={p.id} className="hover:bg-zinc-950/20 transition">
+                        <tr key={p.id}>
                           
                           {/* Rich Product Detail layout */}
                           <td className="py-4 px-5">
@@ -1429,8 +1465,8 @@ console.error(e);
                                 )}
                               </div>
                               <div>
-                                <span className="font-semibold text-white block text-sm leading-tight">{p.name}</span>
-                                <span className="text-[10px] text-zinc-400 block mt-1">{p.material} &bull; {p.color || 'No color spec'}</span>
+                                <span className="cf-td-title leading-tight">{p.name}</span>
+                                <span className="cf-td-meta block mt-1">{p.material} &bull; {p.color || 'No color spec'}</span>
                               </div>
                             </div>
                           </td>
@@ -1438,16 +1474,16 @@ console.error(e);
                           {/* Category & SKU */}
                           <td className="py-4 px-5">
                             <div>
-                              <span className="text-zinc-300 block font-semibold">{p.category}</span>
-                              <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">SKU: {p.sku}</span>
+                              <span className="cf-td-value font-semibold block">{p.category}</span>
+                              <span className="cf-td-meta font-mono mt-0.5 block">SKU: {p.sku}</span>
                             </div>
                           </td>
 
                           {/* Price details */}
-                          <td className="py-4 px-5 font-mono text-xs font-semibold text-white">
+                          <td className="py-4 px-5 cf-td-mono text-xs">
                             <div>
                               <span className="text-sm">₹{(p.wholesalePrice || p.price).toLocaleString('en-IN')}</span>
-                              <span className="text-[9px] text-zinc-500 block font-semibold mt-0.5">MOQ: {p.minimumOrderQuantity || 1} units</span>
+                              <span className="cf-td-meta block font-semibold mt-0.5">MOQ: {p.minimumOrderQuantity || 1} units</span>
                             </div>
                           </td>
 
@@ -1463,12 +1499,12 @@ console.error(e);
                               }`}>
                                 {p.status === 'Out Of Stock' || p.availableStock === 0 ? 'Out of Stock' : 'In Stock'}
                               </span>
-                              <span className="text-[10px] text-zinc-400 block mt-1 font-semibold">{p.availableStock} items in shop</span>
+                              <span className="cf-td-meta block mt-1 font-semibold">{p.availableStock} items in shop</span>
                             </div>
                           </td>
 
                           {/* Created Date */}
-                          <td className="py-4 px-5 text-zinc-400 font-mono font-medium">
+                          <td className="py-4 px-5 cf-td-date font-mono font-medium">
                             {p.createdDate ? new Date(p.createdDate).toLocaleDateString('en-IN', {
                               day: 'numeric', month: 'short', year: 'numeric'
                             }) : '-'}
@@ -1549,18 +1585,18 @@ console.error(e);
               <button 
                 type="button"
                 onClick={() => setReasonModal(null)}
-                className="text-neutral-500 hover:text-white transition"
+                className="text-cf-muted hover:text-cf-primary transition"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="text-xs text-neutral-500 leading-relaxed">
+            <div className="text-xs text-cf-secondary leading-relaxed">
               Define the feedback reasons for <strong className="text-white">{reasonModal.companyName}</strong>. This custom message is displayed instantly on their login block.
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-neutral-500">Detailed Feedback Reason</label>
+              <label className="text-[11px] font-semibold text-cf-muted">Detailed Feedback Reason</label>
               <textarea
                 value={feedbackReasonText}
                 onChange={(e) => setFeedbackReasonText(e.target.value)}
@@ -1608,7 +1644,7 @@ console.error(e);
               <button 
                 type="button"
                 onClick={() => setCategoryModal(null)}
-                className="text-neutral-500 hover:text-white transition cursor-pointer"
+                className="text-cf-muted hover:text-cf-primary transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1617,7 +1653,7 @@ console.error(e);
             <form onSubmit={handleSaveCategory} className="space-y-4 text-xs">
               
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Category Name *</label>
+                <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Category Name *</label>
                 <input
                   required
                   type="text"
@@ -1629,7 +1665,7 @@ console.error(e);
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Description (Optional)</label>
+                <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Description (Optional)</label>
                 <textarea
                   value={categoryModal.description}
                   onChange={(e) => setCategoryModal(prev => prev ? { ...prev, description: e.target.value } : null)}
@@ -1688,7 +1724,7 @@ console.error(e);
               <button 
                 type="button"
                 onClick={() => setDealerModal(null)}
-                className="text-neutral-500 hover:text-white transition cursor-pointer"
+                className="text-cf-muted hover:text-cf-primary transition cursor-pointer"
               >
                 <X className="w-4 h-4 animate-duration-150" />
               </button>
@@ -1706,7 +1742,7 @@ console.error(e);
                 
                 {/* Company Name */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Company Name *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Company Name *</label>
                   <input
                     required
                     type="text"
@@ -1719,7 +1755,7 @@ console.error(e);
 
                 {/* Owner Name */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Owner Name *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Owner Name *</label>
                   <input
                     required
                     type="text"
@@ -1732,7 +1768,7 @@ console.error(e);
 
                 {/* Email Address */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Email Address *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Email Address *</label>
                   <input
                     required
                     type="email"
@@ -1745,7 +1781,7 @@ console.error(e);
 
                 {/* Mobile Number */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Mobile Number (+91) *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Mobile Number (+91) *</label>
                   <input
                     required
                     type="tel"
@@ -1759,7 +1795,7 @@ console.error(e);
 
                 {/* GST Number */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">GST Number (Optional)</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">GST Number (Optional)</label>
                   <input
                     type="text"
                     maxLength={15}
@@ -1772,7 +1808,7 @@ console.error(e);
 
                 {/* City */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">City</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">City</label>
                   <input
                     type="text"
                     value={dealerModal.city}
@@ -1784,7 +1820,7 @@ console.error(e);
 
                 {/* State */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">State</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">State</label>
                   <input
                     type="text"
                     value={dealerModal.state}
@@ -1796,7 +1832,7 @@ console.error(e);
 
                 {/* Credit Limit */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Credit Limit (₹)</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Credit Limit (₹)</label>
                   <input
                     type="number"
                     min={0}
@@ -1808,7 +1844,7 @@ console.error(e);
 
                 {/* Credit Days */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Credit Days</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Credit Days</label>
                   <input
                     type="number"
                     min={0}
@@ -1820,7 +1856,7 @@ console.error(e);
 
                 {/* Password */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Log-in Password *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Log-in Password *</label>
                   <input
                     required
                     type="password"
@@ -1834,7 +1870,7 @@ console.error(e);
 
                 {/* Complete Address */}
                 <div className="space-y-1.5 md:col-span-2">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Registered Address</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Registered Address</label>
                   <textarea
                     value={dealerModal.address}
                     onChange={(e) => setDealerModal(prev => prev ? { ...prev, address: e.target.value } : null)}
@@ -1879,17 +1915,17 @@ console.error(e);
                 <Landmark className="w-5 h-5 text-[#d4af37]" />
                 Dealer Credit & Ledger
               </h3>
-              <button type="button" onClick={() => setCreditModal(null)} className="text-neutral-400 hover:text-white">
+              <button type="button" onClick={() => setCreditModal(null)} className="text-cf-muted hover:text-cf-primary">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <p className="text-xs text-neutral-400">{creditModal.companyName}</p>
+            <p className="text-xs text-cf-secondary">{creditModal.companyName}</p>
 
             <div className="grid sm:grid-cols-2 gap-4">
               <form onSubmit={handleSaveCredit} className="space-y-3">
-                <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Credit Settings</p>
+                <p className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Credit Settings</p>
                 <div>
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Credit Limit (₹)</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase">Credit Limit (₹)</label>
                   <input
                     type="number"
                     min={0}
@@ -1900,7 +1936,7 @@ console.error(e);
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Outstanding Balance (₹)</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase">Outstanding Balance (₹)</label>
                   <input
                     type="number"
                     min={0}
@@ -1911,7 +1947,7 @@ console.error(e);
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase">Credit Days</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase">Credit Days</label>
                   <input
                     type="number"
                     min={0}
@@ -1922,8 +1958,8 @@ console.error(e);
                   />
                 </div>
                 <div className="bg-[#171717] border border-white/10 rounded-lg p-3 text-xs space-y-1">
-                  <div className="flex justify-between"><span className="text-neutral-500">Available Credit</span><span className="text-[#d4af37] font-bold">{formatINR(Math.max(0, creditModal.creditLimit - creditModal.outstandingBalance))}</span></div>
-                  <div className="flex justify-between"><span className="text-neutral-500">Used Credit</span><span className="text-white">{formatINR(creditModal.outstandingBalance)}</span></div>
+                  <div className="flex justify-between"><span className="text-cf-secondary">Available Credit</span><span className="text-[#d4af37] font-bold">{formatINR(Math.max(0, creditModal.creditLimit - creditModal.outstandingBalance))}</span></div>
+                  <div className="flex justify-between"><span className="text-cf-secondary">Used Credit</span><span className="text-cf-primary">{formatINR(creditModal.outstandingBalance)}</span></div>
                 </div>
                 <button type="submit" disabled={savingCredit} className="w-full cf-btn-brand py-3 rounded-xl text-sm">
                   {savingCredit ? 'Saving...' : 'Save Credit Settings'}
@@ -1931,7 +1967,7 @@ console.error(e);
               </form>
 
               <div className="space-y-3">
-                <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Record Transaction</p>
+                <p className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Record Transaction</p>
                 <form onSubmit={handleRecordPayment} className="bg-[#171717] border border-white/10 rounded-lg p-3 space-y-2">
                   <p className="text-xs font-semibold text-green-400">Payment Received</p>
                   <input
@@ -1978,7 +2014,7 @@ console.error(e);
             </div>
 
             <div className="border-t border-white/10 pt-4">
-              <p className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              <p className="text-[10px] font-bold text-cf-muted uppercase tracking-wider mb-3 flex items-center gap-1.5">
                 <BookOpen className="w-3.5 h-3.5" /> Wallet Ledger
               </p>
               <DealerLedger entries={creditModalLedger} loading={ledgerLoading} />
@@ -2000,7 +2036,7 @@ console.error(e);
               <button 
                 type="button"
                 onClick={() => setProductModal(null)}
-                className="text-neutral-500 hover:text-white transition cursor-pointer"
+                className="text-cf-muted hover:text-cf-primary transition cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -2012,7 +2048,7 @@ console.error(e);
                 
                 {/* Product Name */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Product Name *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Product Name *</label>
                   <input
                     required
                     type="text"
@@ -2025,7 +2061,7 @@ console.error(e);
 
                 {/* Product SKU */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Product SKU *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Product SKU *</label>
                   <input
                     required
                     type="text"
@@ -2038,7 +2074,7 @@ console.error(e);
 
                 {/* Category Selection */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Wholesale Category *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Wholesale Category *</label>
                   <select
                     value={productModal.category || ''}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, category: e.target.value } : null)}
@@ -2052,7 +2088,7 @@ console.error(e);
 
                 {/* Wholesale Price */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Wholesale Price (INR) *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Wholesale Price (INR) *</label>
                   <input
                     required
                     type="number"
@@ -2066,7 +2102,7 @@ console.error(e);
 
                 {/* Minimum Order Quantity */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Minimum Order Qty (MOQ) *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Minimum Order Qty (MOQ) *</label>
                   <input
                     required
                     type="number"
@@ -2080,7 +2116,7 @@ console.error(e);
 
                 {/* Available Stock */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Available Stock *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Available Stock *</label>
                   <input
                     required
                     type="number"
@@ -2094,7 +2130,7 @@ console.error(e);
 
                 {/* Material & Accent */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Material *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Material *</label>
                   <input
                     required
                     type="text"
@@ -2107,7 +2143,7 @@ console.error(e);
 
                 {/* Color */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Color Accent</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Color Accent</label>
                   <input
                     type="text"
                     value={productModal.color || ''}
@@ -2119,7 +2155,7 @@ console.error(e);
 
                 {/* Dimensions */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Dimensions *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Dimensions *</label>
                   <input
                     required
                     type="text"
@@ -2132,7 +2168,7 @@ console.error(e);
 
                 {/* Weight */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Weight (Kg)</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Weight (Kg)</label>
                   <input
                     type="text"
                     value={productModal.weight || ''}
@@ -2144,7 +2180,7 @@ console.error(e);
 
                 {/* Size */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Size Segment</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Size Segment</label>
                   <input
                     type="text"
                     value={productModal.size || ''}
@@ -2156,7 +2192,7 @@ console.error(e);
 
                 {/* Shop Display Status */}
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Stock Status *</label>
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider">Stock Status *</label>
                   <select
                     value={productModal.status || 'Available'}
                     onChange={(e) => setProductModal(prev => prev ? { ...prev, status: e.target.value as 'Available' | 'Out Of Stock' } : null)}
@@ -2171,7 +2207,7 @@ console.error(e);
 
               {/* Description */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider pb-1 block">Detailed Description *</label>
+                <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider pb-1 block">Detailed Description *</label>
                 <textarea
                   required
                   value={productModal.description || ''}
@@ -2185,7 +2221,7 @@ console.error(e);
               {/* Dynamic Images (Multiple Images) */}
               <div className="space-y-2 border border-white/10 p-4 rounded-xl bg-[#171717]">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block">
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider block">
                     Product Images ({productModal.images ? productModal.images.length : 0})
                   </label>
                   <label className="cursor-pointer text-white hover:text-[#d4d4d8] text-[11px] font-bold transition flex items-center gap-1.5">
@@ -2217,7 +2253,7 @@ console.error(e);
                   ))}
                   {uploadingImages && (
                     <div className="aspect-square border border-dashed border-zinc-700 rounded-lg flex items-center justify-center animate-pulse">
-                      <span className="text-[9px] text-neutral-500 font-semibold text-center uppercase tracking-wider">Uploading...</span>
+                      <span className="text-[9px] text-cf-muted font-semibold text-center uppercase tracking-wider">Uploading...</span>
                     </div>
                   )}
                 </div>
@@ -2260,7 +2296,7 @@ console.error(e);
               {/* Design Sheets & Leaflet Brochures */}
               <div className="grid grid-cols-2 gap-3 border border-white/10 p-4 rounded-xl bg-[#171717]">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block">
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider block">
                     Furniture Design Sheet
                   </label>
                   {productModal.designSheetUrl ? (
@@ -2289,7 +2325,7 @@ console.error(e);
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block">
+                  <label className="text-[10px] font-bold text-cf-muted uppercase tracking-wider block">
                     Product Brochure Leaflet
                   </label>
                   {productModal.brochureUrl ? (
@@ -2367,7 +2403,7 @@ console.error(e);
                 <h4 className="text-sm font-bold text-white leading-none">
                   {confirmModal.title}
                 </h4>
-                <p className="text-[11px] text-neutral-500 leading-relaxed pt-1">
+                <p className="text-[11px] text-cf-secondary leading-relaxed pt-1">
                   {confirmModal.message}
                 </p>
               </div>
