@@ -1,6 +1,6 @@
 export type DealerStatus = 'Pending Approval' | 'Approved' | 'Rejected' | 'Suspended';
 
-export type UserRole = 'admin' | 'dealer';
+export type UserRole = 'admin' | 'dealer' | 'sales_executive';
 
 export interface DealerProfile {
   uid: string;
@@ -23,6 +23,45 @@ export interface DealerProfile {
   outstandingBalance?: number;
   /** Payment terms in days */
   creditDays?: number;
+  /** Admin-assigned field sales executive */
+  assignedExecutiveId?: string;
+  assignedExecutiveName?: string;
+  /** Denormalized list for secure executive queries (synced on assign) */
+  assignedDealerIds?: string[];
+  /** Sales territory label (for sales_executive role) */
+  territory?: string;
+}
+
+export type VisitOutcome = 'completed' | 'scheduled' | 'cancelled';
+
+export interface SalesVisit {
+  id: string;
+  executiveId: string;
+  executiveName: string;
+  dealerId: string;
+  dealerCompanyName: string;
+  visitDate: string;
+  purpose: string;
+  notes: string;
+  outcome: VisitOutcome;
+  createdDate: string;
+}
+
+export type FollowUpStatus = 'pending' | 'completed' | 'cancelled';
+
+export interface SalesFollowUp {
+  id: string;
+  executiveId: string;
+  executiveName: string;
+  dealerId: string;
+  dealerCompanyName: string;
+  dueDate: string;
+  subject: string;
+  notes: string;
+  status: FollowUpStatus;
+  relatedVisitId?: string;
+  completedDate?: string;
+  createdDate: string;
 }
 
 export interface CategoryItem {

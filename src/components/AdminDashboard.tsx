@@ -5,10 +5,11 @@ import { getDealerCreditInfo, formatINR, DEFAULT_CREDIT_LIMIT, DEFAULT_CREDIT_DA
 import { 
   Users, ClipboardList, CheckCircle, Ban, Hourglass, Trash2, 
   Search, RefreshCw, LogOut, ChevronRight, X, AlertTriangle, Info, ShieldCheck, Landmark,
-  Layers, Package, Edit, Plus, Eye, EyeOff, Upload, Image as ImageIcon, BarChart3, BookOpen
+  Layers, Package, Edit, Plus, Eye, EyeOff, Upload, Image as ImageIcon, BarChart3, BookOpen, Briefcase
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
 import AdminAnalytics from './AdminAnalytics';
+import AdminSalesTeam from './AdminSalesTeam';
 import Toast, { ToastMessage } from './Toast';
 import DealerLedger from './DealerLedger';
 import OrderProgress from './OrderProgress';
@@ -37,7 +38,8 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const [requirements, setRequirements] = useState<StockRequirement[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [activeTab, setActiveTab] = useState<'analytics' | 'dealers' | 'requirements' | 'categories' | 'products'>('analytics');
+  const [salesExecutives, setSalesExecutives] = useState<DealerProfile[]>([]);
+  const [activeTab, setActiveTab] = useState<'analytics' | 'dealers' | 'requirements' | 'categories' | 'products' | 'sales'>('analytics');
   const [loading, setLoading] = useState(false);
   const [fulfillingReqId, setFulfillingReqId] = useState<string | null>(null);
   const [uploadingImages, setUploadingImages] = useState(false);
@@ -143,16 +145,18 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [allDealers, allReqs, allCats, allProds] = await Promise.all([
+      const [allDealers, allReqs, allCats, allProds, allExecs] = await Promise.all([
         DBService.getDealers(),
         DBService.getStockRequirements(),
         DBService.getCategories(),
         DBService.getProducts(),
+        DBService.getSalesExecutives(),
       ]);
       setDealers(allDealers);
       setRequirements(allReqs);
       setCategories(allCats);
       setProducts(allProds);
+      setSalesExecutives(allExecs);
 
       // Recalculate stats
       const counts = allDealers.reduce((acc, current) => {
@@ -564,7 +568,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       name: p.name,
       sku: p.sku,
       category: p.category,
-      images: p.images || [p.image] || [],
+      images: (p.images && p.images.length > 0) ? p.images : (p.image ? [p.image] : []),
       description: p.description,
       material: p.material,
       color: p.color || '',
@@ -635,7 +639,9 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
       setProductModal(null);
       await fetchData();
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error("Save product failed", err);
+      showToast(`Failed to save product: ${errMsg}`, 'error');
     }
   };
 
@@ -744,6 +750,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const navItems = [
     { id: 'analytics' as const, label: 'Analytics', icon: BarChart3, count: null as number | null },
     { id: 'dealers' as const, label: 'Dealers', icon: Users, count: dealers.length },
+    { id: 'sales' as const, label: 'Sales Team', icon: Briefcase, count: salesExecutives.length },
     { id: 'requirements' as const, label: 'Orders', icon: ClipboardList, count: requirements.filter((r) => isActiveOrder(r.status)).length },
     { id: 'categories' as const, label: 'Categories', icon: Layers, count: categories.length },
     { id: 'products' as const, label: 'Products', icon: Package, count: products.length },
@@ -752,6 +759,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
   const tabLabels: Record<typeof activeTab, string> = {
     analytics: 'Analytics',
     dealers: 'Dealers',
+    sales: 'Sales Team',
     requirements: 'Order Management',
     categories: 'Categories',
     products: 'Products',
@@ -850,7 +858,7 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
             ))}
           </div>
 
-          {activeTab !== 'analytics' && (
+          {activeTab !== 'analytics' && activeTab !== 'sales' && (
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative grow sm:w-60">
               <Search className="w-4 h-4 text-cf-muted absolute left-3 top-3.5" />
@@ -896,7 +904,16 @@ export default function AdminDashboard({ adminUser, onLogout }: AdminDashboardPr
           <AdminAnalytics dealers={dealers} products={products} requirements={requirements} />
         )}
 
-        {activeTab !== 'analytics' && (
+        {activeTab === 'sales' && (
+          <AdminSalesTeam
+            executives={salesExecutives}
+            dealers={dealers}
+            onRefresh={fetchData}
+            showToast={showToast}
+          />
+        )}
+
+        {activeTab !== 'analytics' && activeTab !== 'sales' && (
         <>
         {/* Statistics Panels */}
         <div className="hidden lg:grid grid-cols-2 md:grid-cols-5 gap-4">

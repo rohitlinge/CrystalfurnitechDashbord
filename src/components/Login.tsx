@@ -48,6 +48,10 @@ export default function Login({
           return;
         }
       }
+      if (user.role === 'sales_executive' && user.status !== 'Approved') {
+        setStatusMessage({ type: 'suspended', message: 'Sales executive account inactive.', details: 'Contact your admin at Crystal Furnitech.' });
+        return;
+      }
       onLoginSuccess(user);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Invalid credentials.');

@@ -10,6 +10,7 @@ import { Server } from 'lucide-react';
 const Register = lazy(() => import('./components/Register'));
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
 const DealerDashboard = lazy(() => import('./components/DealerDashboard'));
+const SalesExecutiveDashboard = lazy(() => import('./components/SalesExecutiveDashboard'));
 
 function ScreenLoader() {
   return (
@@ -53,10 +54,16 @@ console.error('App render error:', error, info);
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<DealerProfile | null>(null);
-  const [currentScreen, setCurrentScreen] = useState<'login' | 'register' | 'admin' | 'dealer'>('login');
+  const [currentScreen, setCurrentScreen] = useState<'login' | 'register' | 'admin' | 'dealer' | 'sales_executive'>('login');
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [booting, setBooting] = useState(true);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  const screenForRole = (role: DealerProfile['role']): typeof currentScreen => {
+    if (role === 'admin') return 'admin';
+    if (role === 'sales_executive') return 'sales_executive';
+    return 'dealer';
+  };
 
   const recheckFirebaseConnection = useCallback(async () => {
     const connected = await ensureFirebaseConnection(20000);
@@ -86,9 +93,14 @@ export default function App() {
               setCurrentUser(null);
               setCurrentScreen('login');
               setToast({ id: Date.now(), type: 'info', message: 'Your account is no longer approved. Please contact Crystal Furnitech.' });
+            } else if (fresh.role === 'sales_executive' && fresh.status !== 'Approved') {
+              DBService.logout();
+              setCurrentUser(null);
+              setCurrentScreen('login');
+              setToast({ id: Date.now(), type: 'info', message: 'Your sales executive account is inactive. Please contact admin.' });
             } else {
               setCurrentUser(fresh);
-              setCurrentScreen(fresh.role === 'admin' ? 'admin' : 'dealer');
+              setCurrentScreen(screenForRole(fresh.role));
             }
           } else {
             DBService.logout();
@@ -132,7 +144,7 @@ export default function App() {
 
   const handleLoginSuccess = (user: DealerProfile) => {
     setCurrentUser(user);
-    setCurrentScreen(user.role === 'admin' ? 'admin' : 'dealer');
+    setCurrentScreen(screenForRole(user.role));
   };
 
   const handleLogout = () => {
@@ -142,7 +154,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!booting && (currentScreen === 'admin' || currentScreen === 'dealer') && !currentUser) {
+    if (!booting && (currentScreen === 'admin' || currentScreen === 'dealer' || currentScreen === 'sales_executive') && !currentUser) {
       setCurrentScreen('login');
     }
   }, [booting, currentScreen, currentUser]);
@@ -200,6 +212,12 @@ export default function App() {
       {currentScreen === 'dealer' && currentUser && (
         <Suspense fallback={<ScreenLoader />}>
           <DealerDashboard dealerUser={currentUser} onLogout={handleLogout} />
+        </Suspense>
+      )}
+
+      {currentScreen === 'sales_executive' && currentUser && (
+        <Suspense fallback={<ScreenLoader />}>
+          <SalesExecutiveDashboard executiveUser={currentUser} onLogout={handleLogout} />
         </Suspense>
       )}
     </div>

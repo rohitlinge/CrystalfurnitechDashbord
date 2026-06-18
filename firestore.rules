@@ -30,11 +30,37 @@ service cloud.firestore {
       );
     }
 
+    function isSalesExecutive() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/dealers/$(request.auth.uid)) &&
+        dealerDoc().data.get('role', '') == 'sales_executive' &&
+        dealerDoc().data.get('status', '') == 'Approved';
+    }
+
+    function executiveAssignedDealerIds() {
+      return dealerDoc().data.get('assignedDealerIds', []);
+    }
+
+    function isExecutiveAssignedToDealer(dealerId) {
+      return isSalesExecutive() && (
+        dealerId in executiveAssignedDealerIds() ||
+        (
+          exists(/databases/$(database)/documents/dealers/$(dealerId)) &&
+          get(/databases/$(database)/documents/dealers/$(dealerId)).data.get('assignedExecutiveId', '') == request.auth.uid
+        )
+      );
+    }
+
     function isApprovedDealer() {
       return isSignedIn() &&
         exists(/databases/$(database)/documents/dealers/$(request.auth.uid)) &&
         getRole() == 'dealer' &&
         dealerDoc().data.status == 'Approved';
+    }
+
+    function isAssignedDealer(dealerId) {
+      return exists(/databases/$(database)/documents/dealers/$(dealerId)) &&
+        get(/databases/$(database)/documents/dealers/$(dealerId)).data.assignedExecutiveId == request.auth.uid;
     }
 
     function isValidDealer(data) {
@@ -49,6 +75,15 @@ service cloud.firestore {
              (!('creditLimit' in data) || ((data.creditLimit is int || data.creditLimit is number) && data.creditLimit >= 0)) &&
              (!('outstandingBalance' in data) || ((data.outstandingBalance is int || data.outstandingBalance is number) && data.outstandingBalance >= 0)) &&
              (!('creditDays' in data) || ((data.creditDays is int || data.creditDays is number) && data.creditDays >= 0));
+    }
+
+    function isValidSalesExecutive(data) {
+      return data.ownerName is string && data.ownerName.size() >= 2 && data.ownerName.size() <= 100 &&
+             data.mobile is string && data.mobile.size() >= 10 && data.mobile.size() <= 15 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 100 &&
+             data.role == 'sales_executive' &&
+             data.status == 'Approved';
     }
 
     function isValidCategory(data) {
@@ -82,6 +117,22 @@ service cloud.firestore {
              data.type in ['opening', 'payment', 'order', 'order_cancel', 'credit_note', 'adjustment'];
     }
 
+    function isValidVisit(data) {
+      return data.executiveId is string && data.executiveId.size() > 0 &&
+             data.dealerId is string && data.dealerId.size() > 0 &&
+             data.dealerCompanyName is string && data.dealerCompanyName.size() >= 2 &&
+             data.purpose is string && data.purpose.size() >= 2 && data.purpose.size() <= 200 &&
+             data.outcome in ['completed', 'scheduled', 'cancelled'];
+    }
+
+    function isValidFollowUp(data) {
+      return data.executiveId is string && data.executiveId.size() > 0 &&
+             data.dealerId is string && data.dealerId.size() > 0 &&
+             data.dealerCompanyName is string && data.dealerCompanyName.size() >= 2 &&
+             data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 200 &&
+             data.status in ['pending', 'completed', 'cancelled'];
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
@@ -91,16 +142,28 @@ service cloud.firestore {
     }
 
     match /dealers/{userId} {
-      allow get: if isSignedIn() && (isOwner(userId) || isAdmin());
-      allow list: if isAdmin();
+      allow get: if isSignedIn() && (
+        isOwner(userId) ||
+        isAdmin() ||
+        (isSalesExecutive() && resource.data.role == 'dealer' && resource.data.assignedExecutiveId == request.auth.uid)
+      );
+      allow list: if isAdmin() || (
+        isSalesExecutive() && resource.data.get('assignedExecutiveId', '') == request.auth.uid
+      );
 
-      // Admin creates approved dealer profiles; dealers self-register as pending.
-      allow create: if isSignedIn() && isValidId(userId) && isValidDealer(request.resource.data) && (
+      allow create: if isSignedIn() && isValidId(userId) && (
         (
           isAdmin() &&
           request.resource.data.role == 'dealer' &&
           request.resource.data.status == 'Approved' &&
-          request.resource.data.uid == userId
+          request.resource.data.uid == userId &&
+          isValidDealer(request.resource.data)
+        ) || (
+          isAdmin() &&
+          request.resource.data.role == 'sales_executive' &&
+          request.resource.data.status == 'Approved' &&
+          request.resource.data.uid == userId &&
+          isValidSalesExecutive(request.resource.data)
         ) || (
           isOwner(userId) &&
           request.resource.data.role == 'dealer' &&
@@ -146,16 +209,19 @@ service cloud.firestore {
     match /products/{productId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data);
-      // Stock changes only by admin (on fulfill / catalog edit) — dealers never write product docs directly.
       allow update: if isAdmin() && isValidId(productId) && isValidProduct(request.resource.data);
     }
 
     match /requirements/{requirementId} {
       allow get: if isSignedIn() && isValidId(requirementId) && (
-        resource.data.dealerId == request.auth.uid || isAdmin()
+        resource.data.dealerId == request.auth.uid ||
+        isAdmin() ||
+        isExecutiveAssignedToDealer(resource.data.dealerId)
       );
       allow list: if isSignedIn() && (
-        resource.data.dealerId == request.auth.uid || isAdmin()
+        resource.data.dealerId == request.auth.uid ||
+        isAdmin() ||
+        isExecutiveAssignedToDealer(resource.data.dealerId)
       );
 
       allow create: if isSignedIn() && isValidId(requirementId) && (
@@ -184,10 +250,14 @@ service cloud.firestore {
 
     match /ledger/{entryId} {
       allow get: if isSignedIn() && isValidId(entryId) && (
-        resource.data.dealerId == request.auth.uid || isAdmin()
+        resource.data.dealerId == request.auth.uid ||
+        isAdmin() ||
+        isExecutiveAssignedToDealer(resource.data.dealerId)
       );
       allow list: if isSignedIn() && (
-        resource.data.dealerId == request.auth.uid || isAdmin()
+        resource.data.dealerId == request.auth.uid ||
+        isAdmin() ||
+        isExecutiveAssignedToDealer(resource.data.dealerId)
       );
       allow create: if isSignedIn() && isValidId(entryId) && isValidLedger(request.resource.data) && (
         isAdmin() || (
@@ -197,6 +267,46 @@ service cloud.firestore {
         )
       );
       allow update, delete: if isAdmin() && isValidId(entryId);
+    }
+
+    match /visits/{visitId} {
+      allow get: if isSignedIn() && isValidId(visitId) && (
+        isAdmin() || resource.data.executiveId == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || resource.data.executiveId == request.auth.uid
+      );
+      allow create: if isSignedIn() && isValidId(visitId) && isValidVisit(request.resource.data) && (
+        isAdmin() ||
+        (
+          isSalesExecutive() &&
+          request.resource.data.executiveId == request.auth.uid &&
+          isAssignedDealer(request.resource.data.dealerId)
+        )
+      );
+      allow update, delete: if isSignedIn() && isValidId(visitId) && (
+        isAdmin() || (isSalesExecutive() && resource.data.executiveId == request.auth.uid)
+      );
+    }
+
+    match /followUps/{followUpId} {
+      allow get: if isSignedIn() && isValidId(followUpId) && (
+        isAdmin() || resource.data.executiveId == request.auth.uid
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() || resource.data.executiveId == request.auth.uid
+      );
+      allow create: if isSignedIn() && isValidId(followUpId) && isValidFollowUp(request.resource.data) && (
+        isAdmin() ||
+        (
+          isSalesExecutive() &&
+          request.resource.data.executiveId == request.auth.uid &&
+          isAssignedDealer(request.resource.data.dealerId)
+        )
+      );
+      allow update, delete: if isSignedIn() && isValidId(followUpId) && (
+        isAdmin() || (isSalesExecutive() && resource.data.executiveId == request.auth.uid)
+      );
     }
 
     match /notifications/{notificationId} {

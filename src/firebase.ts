@@ -19,12 +19,13 @@ import {
   query, 
   where,
   deleteDoc,
+  deleteField,
   runTransaction,
   type DocumentSnapshot,
   type QuerySnapshot
 } from 'firebase/firestore';
 import { getStorage, ref, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem, LedgerEntry, LedgerEntryType } from './types';
+import { DealerProfile, DealerStatus, ProductItem, StockRequirement, CategoryItem, LedgerEntry, LedgerEntryType, SalesVisit, SalesFollowUp, FollowUpStatus, VisitOutcome } from './types';
 import { DEFAULT_DEALER_CREDIT, getDealerCreditInfo } from './credit';
 import {
   formatVariantSummary,
@@ -177,6 +178,27 @@ async function ensureAdminAuthenticated(): Promise<void> {
   throw new Error('Admin session required. Please log in again.');
 }
 
+/** Verify the current session belongs to a sales executive (or admin). */
+async function ensureSalesExecutiveAuthenticated(): Promise<void> {
+  await ensureAuthenticated();
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('Session required. Please log in again.');
+  }
+  if (user.email?.toLowerCase() === 'admin@crystalfurnitech.com') {
+    return;
+  }
+  const profile = await getDocument<DealerProfile>(
+    'dealers',
+    user.uid,
+    'Sales executive profile verification timed out.'
+  );
+  if (profile?.role === 'admin' || profile?.role === 'sales_executive') {
+    return;
+  }
+  throw new Error('Sales executive session required. Please log in again.');
+}
+
 function mapDocSnapshot<T>(snap: DocumentSnapshot): T | null {
   if (!snap.exists()) return null;
   const data = snap.data() as Record<string, unknown>;
@@ -198,18 +220,25 @@ async function fetchCollection<T>(
     requireAdmin?: boolean;
     filterField?: string;
     filterValue?: unknown;
+    filters?: Array<{ field: string; value: unknown }>;
   } = {}
 ): Promise<T[]> {
   await ensureAuthenticated();
   const msg = options.timeoutMsg || `${collectionName} request timed out.`;
   const idToken = await auth.currentUser!.getIdToken(true);
 
-  if (options.filterField && options.filterValue !== undefined) {
+  const queryFilters = options.filters?.length
+    ? options.filters.map((f) => ({ fieldPath: f.field, value: f.value }))
+    : options.filterField && options.filterValue !== undefined
+      ? [{ fieldPath: options.filterField, value: options.filterValue }]
+      : [];
+
+  if (queryFilters.length > 0) {
     try {
       return await withRetry(
         () =>
           withTimeout(
-            runQueryRest<T>(collectionName, options.filterField!, options.filterValue, idToken),
+            runQueryRestWithFilters<T>(collectionName, queryFilters, idToken),
             FIRESTORE_READ_TIMEOUT_MS,
             msg
           ),
@@ -219,8 +248,9 @@ async function fetchCollection<T>(
 console.warn(`REST query ${collectionName} failed, trying SDK:`, restError);
       const colRef = collection(db, collectionName);
       try {
+        const constraints = queryFilters.map((f) => where(f.fieldPath, '==', f.value));
         const snapshot = await withTimeout(
-          getDocs(query(colRef, where(options.filterField, '==', options.filterValue))),
+          getDocs(query(colRef, ...constraints)),
           FIRESTORE_READ_TIMEOUT_MS,
           msg
         );
@@ -345,6 +375,14 @@ async function listCollectionRest<T>(
   return runQueryRest<T>(collectionName, '', null, token, true);
 }
 
+function toFirestoreRestValue(value: unknown): Record<string, unknown> {
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  }
+  return { stringValue: String(value) };
+}
+
 /** Firestore REST structured query — works on networks that block the WebSocket SDK. */
 async function runQueryRest<T>(
   collectionName: string,
@@ -352,6 +390,15 @@ async function runQueryRest<T>(
   value: unknown,
   idToken: string,
   listAll = false
+): Promise<T[]> {
+  const filters = !listAll && fieldPath ? [{ fieldPath, value }] : [];
+  return runQueryRestWithFilters<T>(collectionName, filters, idToken);
+}
+
+async function runQueryRestWithFilters<T>(
+  collectionName: string,
+  filters: Array<{ fieldPath: string; value: unknown }>,
+  idToken: string
 ): Promise<T[]> {
   const url =
     `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
@@ -361,19 +408,25 @@ async function runQueryRest<T>(
     from: [{ collectionId: collectionName }],
   };
 
-  if (!listAll && fieldPath) {
-    let fieldValue: Record<string, unknown>;
-    if (typeof value === 'boolean') fieldValue = { booleanValue: value };
-    else if (typeof value === 'number') {
-      fieldValue = Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
-    } else {
-      fieldValue = { stringValue: String(value) };
-    }
+  if (filters.length === 1) {
     structuredQuery.where = {
       fieldFilter: {
-        field: { fieldPath },
+        field: { fieldPath: filters[0].fieldPath },
         op: 'EQUAL',
-        value: fieldValue,
+        value: toFirestoreRestValue(filters[0].value),
+      },
+    };
+  } else if (filters.length > 1) {
+    structuredQuery.where = {
+      compositeFilter: {
+        op: 'AND',
+        filters: filters.map((f) => ({
+          fieldFilter: {
+            field: { fieldPath: f.fieldPath },
+            op: 'EQUAL',
+            value: toFirestoreRestValue(f.value),
+          },
+        })),
       },
     };
   }
@@ -385,7 +438,8 @@ async function runQueryRest<T>(
   });
 
   if (!res.ok) {
-    throw new Error(`Failed to query ${collectionName} (${res.status}): ${await res.text()}`);
+    const detail = await res.text();
+    throw new Error(`Failed to query ${collectionName} (${res.status}): ${detail}`);
   }
 
   const rows = (await res.json()) as Array<{ document?: { name: string; fields: Record<string, unknown> } }>;
@@ -420,6 +474,10 @@ async function writeDocumentRest(
     }
     throw new Error(`Firestore write failed (${res.status}): ${detail}`);
   }
+}
+
+function omitUndefined<T extends Record<string, unknown>>(obj: T): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 }
 
 async function patchDocumentRest(
@@ -568,7 +626,7 @@ function formatFirebaseError(error: unknown, fallback: string): string {
   const code = err?.code || '';
   const message = err?.message || fallback;
 
-  if (code === 'permission-denied' || message.includes('PERMISSION_DENIED')) {
+  if (code === 'permission-denied' || message.includes('PERMISSION_DENIED') || message.includes('(403)')) {
     return 'Firestore denied this action. Your account may not have access, or security rules need updating. Contact admin or run "npm run deploy:rules".';
   }
   if (code === 'auth/email-already-in-use') {
@@ -1297,7 +1355,7 @@ export class DBService {
       createdDate: new Date().toISOString()
     };
     await withTimeout(
-      setDoc(doc(db, 'products', newProd.id), newProd),
+      setDoc(doc(db, 'products', newProd.id), omitUndefined(newProd as unknown as Record<string, unknown>)),
       15000,
       'Failed to save product to Firebase.'
     );
@@ -1306,8 +1364,9 @@ export class DBService {
 
   static async updateProduct(id: string, fields: Partial<ProductItem>): Promise<void> {
     await ensureAdminAuthenticated();
+    const sanitized = omitUndefined(fields as unknown as Record<string, unknown>);
     await withTimeout(
-      updateDoc(doc(db, 'products', id), fields),
+      updateDoc(doc(db, 'products', id), sanitized),
       15000,
       'Failed to update product in Firebase.'
     );
@@ -1774,6 +1833,27 @@ export class DBService {
       return reqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
     }
 
+    await ensureAuthenticated();
+    const uid = auth.currentUser!.uid;
+    const profile = await getDocument<DealerProfile>('dealers', uid, 'Reading profile timed out.');
+    if (profile?.role === 'sales_executive') {
+      const assignedDealers = await DBService.getAssignedDealers(uid);
+      if (assignedDealers.length === 0) {
+        return [];
+      }
+      const reqLists = await Promise.all(
+        assignedDealers.map((d) =>
+          fetchCollection<StockRequirement>('requirements', {
+            filterField: 'dealerId',
+            filterValue: d.uid,
+            timeoutMsg: 'Stock requirements request timed out.',
+          })
+        )
+      );
+      const execReqs = reqLists.flat();
+      return execReqs.sort((a, b) => new Date(b.requestedDate).getTime() - new Date(a.requestedDate).getTime());
+    }
+
     await ensureAdminAuthenticated();
     const allReqs = await fetchCollection<StockRequirement>('requirements', {
       requireAdmin: true,
@@ -1991,6 +2071,274 @@ throw ledgerErr;
       deleteDoc(doc(db, 'requirements', id)),
       15000,
       'Failed to delete stock requirement from Firebase.'
+    );
+  }
+
+  // --- Sales Executives (Admin) ---
+  static async getSalesExecutives(): Promise<DealerProfile[]> {
+    await ensureAdminAuthenticated();
+    const all = await fetchCollection<DealerProfile>('dealers', { requireAdmin: true });
+    return all
+      .filter((d) => d.role === 'sales_executive')
+      .sort((a, b) => new Date(b.registrationDate).getTime() - new Date(a.registrationDate).getTime());
+  }
+
+  static async addSalesExecutive(fields: {
+    name: string;
+    email: string;
+    mobile: string;
+    password: string;
+    territory?: string;
+  }): Promise<DealerProfile> {
+    await ensureAdminAuthenticated();
+    const cleanEmail = fields.email.toLowerCase().trim();
+    const territory = fields.territory?.trim() || 'Field Sales';
+    const newProfile: DealerProfile = {
+      uid: '',
+      companyName: territory,
+      ownerName: fields.name.trim(),
+      mobile: fields.mobile.trim(),
+      email: cleanEmail,
+      gstNumber: 'N/A',
+      city: 'Mumbai',
+      state: 'Maharashtra',
+      address: 'Crystal Furnitech Field Office',
+      status: 'Approved',
+      registrationDate: new Date().toISOString(),
+      role: 'sales_executive',
+      territory,
+      assignedDealerIds: [],
+    };
+
+    let fbUid = '';
+    try {
+      const secondaryAuth = getSecondaryAuth();
+      try {
+        const authResult = await withTimeout(
+          createUserWithEmailAndPassword(secondaryAuth, cleanEmail, fields.password),
+          15000,
+          'Creating sales executive auth account timed out.'
+        );
+        fbUid = authResult.user.uid;
+      } catch (authError: unknown) {
+        const err = authError as { code?: string; message?: string };
+        if (err?.code === 'auth/email-already-in-use' || err?.message?.includes('email-already-in-use')) {
+          const authResult = await withTimeout(
+            signInWithEmailAndPassword(secondaryAuth, cleanEmail, fields.password),
+            15000,
+            'Signing in existing sales executive timed out.'
+          );
+          fbUid = authResult.user.uid;
+        } else {
+          throw authError;
+        }
+      } finally {
+        try {
+          await fbSignOut(secondaryAuth);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      newProfile.uid = fbUid;
+      const profilePayload = { ...newProfile, uid: fbUid };
+
+      await withTimeout(
+        setDoc(doc(db, 'dealers', fbUid), profilePayload, { merge: true }),
+        15000,
+        'Saving sales executive profile timed out.'
+      );
+    } catch (error: unknown) {
+      throw new Error(formatFirebaseError(error, 'Failed to add sales executive.'));
+    }
+
+    return { ...newProfile, uid: fbUid };
+  }
+
+  static async deleteSalesExecutive(uid: string): Promise<void> {
+    await ensureAdminAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'dealers', uid)),
+      15000,
+      'Failed to delete sales executive from Firebase.'
+    );
+  }
+
+  static async assignDealerToExecutive(
+    dealerId: string,
+    executiveId: string | null,
+    executiveName?: string
+  ): Promise<void> {
+    await ensureAdminAuthenticated();
+    const idToken = await auth.currentUser!.getIdToken(true);
+
+    const dealerBefore = await getDocument<DealerProfile>('dealers', dealerId, 'Reading dealer timed out.');
+    const previousExecutiveId = dealerBefore?.assignedExecutiveId || null;
+
+    if (executiveId) {
+      await patchDocumentRest(
+        'dealers',
+        dealerId,
+        { assignedExecutiveId: executiveId, assignedExecutiveName: executiveName || '' },
+        idToken
+      );
+    } else {
+      await patchDocumentRest(
+        'dealers',
+        dealerId,
+        { assignedExecutiveId: '', assignedExecutiveName: '' },
+        idToken
+      );
+    }
+
+    const syncExecutiveIds = async (execId: string | null, mutate: (ids: string[]) => string[]) => {
+      if (!execId) return;
+      const execProfile = await getDocument<DealerProfile>('dealers', execId, 'Reading executive timed out.');
+      if (!execProfile || execProfile.role !== 'sales_executive') return;
+      const nextIds = mutate([...(execProfile.assignedDealerIds || [])]);
+      await patchDocumentRest('dealers', execId, { assignedDealerIds: nextIds }, idToken);
+    };
+
+    if (previousExecutiveId && previousExecutiveId !== executiveId) {
+      await syncExecutiveIds(previousExecutiveId, (ids) => ids.filter((id) => id !== dealerId));
+    }
+    if (executiveId) {
+      await syncExecutiveIds(executiveId, (ids) => (ids.includes(dealerId) ? ids : [...ids, dealerId]));
+    }
+  }
+
+  static async getAssignedDealers(executiveId?: string): Promise<DealerProfile[]> {
+    await ensureAuthenticated();
+    const uid = executiveId || auth.currentUser!.uid;
+    if (uid !== auth.currentUser!.uid) {
+      await ensureAdminAuthenticated();
+    } else {
+      await ensureSalesExecutiveAuthenticated();
+    }
+    const assigned = await fetchCollection<DealerProfile>('dealers', {
+      filterField: 'assignedExecutiveId',
+      filterValue: uid,
+      timeoutMsg: 'Assigned dealers request timed out.',
+    });
+    return assigned
+      .filter((d) => d.role === 'dealer')
+      .sort((a, b) => a.companyName.localeCompare(b.companyName));
+  }
+
+  // --- Sales Visits ---
+  static async getVisits(executiveId?: string): Promise<SalesVisit[]> {
+    await ensureAuthenticated();
+    const uid = executiveId || auth.currentUser!.uid;
+    if (uid !== auth.currentUser!.uid) {
+      await ensureAdminAuthenticated();
+    } else {
+      await ensureSalesExecutiveAuthenticated();
+    }
+    const visits = executiveId && uid !== auth.currentUser!.uid
+      ? (await fetchCollection<SalesVisit>('visits', { requireAdmin: true })).filter((v) => v.executiveId === uid)
+      : await fetchCollection<SalesVisit>('visits', {
+          filterField: 'executiveId',
+          filterValue: uid,
+          timeoutMsg: 'Visits request timed out.',
+        });
+    return visits.sort((a, b) => new Date(b.visitDate).getTime() - new Date(a.visitDate).getTime());
+  }
+
+  static async createVisit(
+    fields: Omit<SalesVisit, 'id' | 'createdDate' | 'executiveId' | 'executiveName'>
+  ): Promise<SalesVisit> {
+    await ensureSalesExecutiveAuthenticated();
+    const profile = await getDocument<DealerProfile>('dealers', auth.currentUser!.uid, 'Reading profile timed out.');
+    const visit: SalesVisit = {
+      ...fields,
+      id: 'visit-' + Math.random().toString(36).substring(2, 11),
+      executiveId: auth.currentUser!.uid,
+      executiveName: profile?.ownerName || 'Sales Executive',
+      createdDate: new Date().toISOString(),
+    };
+    await withTimeout(
+      setDoc(doc(db, 'visits', visit.id), visit),
+      15000,
+      'Failed to save visit.'
+    );
+    return visit;
+  }
+
+  static async updateVisit(id: string, fields: Partial<SalesVisit>): Promise<void> {
+    await ensureSalesExecutiveAuthenticated();
+    const sanitized = omitUndefined(fields as unknown as Record<string, unknown>);
+    await withTimeout(
+      updateDoc(doc(db, 'visits', id), sanitized),
+      15000,
+      'Failed to update visit.'
+    );
+  }
+
+  static async deleteVisit(id: string): Promise<void> {
+    await ensureSalesExecutiveAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'visits', id)),
+      15000,
+      'Failed to delete visit.'
+    );
+  }
+
+  // --- Sales Follow-ups ---
+  static async getFollowUps(executiveId?: string): Promise<SalesFollowUp[]> {
+    await ensureAuthenticated();
+    const uid = executiveId || auth.currentUser!.uid;
+    if (uid !== auth.currentUser!.uid) {
+      await ensureAdminAuthenticated();
+    } else {
+      await ensureSalesExecutiveAuthenticated();
+    }
+    const followUps = executiveId && uid !== auth.currentUser!.uid
+      ? (await fetchCollection<SalesFollowUp>('followUps', { requireAdmin: true })).filter((f) => f.executiveId === uid)
+      : await fetchCollection<SalesFollowUp>('followUps', {
+          filterField: 'executiveId',
+          filterValue: uid,
+          timeoutMsg: 'Follow-ups request timed out.',
+        });
+    return followUps.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  }
+
+  static async createFollowUp(
+    fields: Omit<SalesFollowUp, 'id' | 'createdDate' | 'executiveId' | 'executiveName' | 'status'> & { status?: FollowUpStatus }
+  ): Promise<SalesFollowUp> {
+    await ensureSalesExecutiveAuthenticated();
+    const profile = await getDocument<DealerProfile>('dealers', auth.currentUser!.uid, 'Reading profile timed out.');
+    const followUp: SalesFollowUp = {
+      ...fields,
+      status: fields.status || 'pending',
+      id: 'follow-' + Math.random().toString(36).substring(2, 11),
+      executiveId: auth.currentUser!.uid,
+      executiveName: profile?.ownerName || 'Sales Executive',
+      createdDate: new Date().toISOString(),
+    };
+    await withTimeout(
+      setDoc(doc(db, 'followUps', followUp.id), followUp),
+      15000,
+      'Failed to save follow-up.'
+    );
+    return followUp;
+  }
+
+  static async updateFollowUp(id: string, fields: Partial<SalesFollowUp>): Promise<void> {
+    await ensureSalesExecutiveAuthenticated();
+    const sanitized = omitUndefined(fields as unknown as Record<string, unknown>);
+    await withTimeout(
+      updateDoc(doc(db, 'followUps', id), sanitized),
+      15000,
+      'Failed to update follow-up.'
+    );
+  }
+
+  static async deleteFollowUp(id: string): Promise<void> {
+    await ensureSalesExecutiveAuthenticated();
+    await withTimeout(
+      deleteDoc(doc(db, 'followUps', id)),
+      15000,
+      'Failed to delete follow-up.'
     );
   }
 

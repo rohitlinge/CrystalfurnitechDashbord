@@ -111,10 +111,10 @@ export function productFieldsFromVariants(modal: {
   const colorVariants = modal.colorVariants.length ? modal.colorVariants : parseVariantInput(modal.color);
   const sizeVariants = modal.sizeVariants.length ? modal.sizeVariants : parseVariantInput(modal.size);
   return {
-    colorVariants: colorVariants.length ? colorVariants : undefined,
-    fabricVariants: modal.fabricVariants.length ? modal.fabricVariants : undefined,
-    woodFinishVariants: modal.woodFinishVariants.length ? modal.woodFinishVariants : undefined,
-    sizeVariants: sizeVariants.length ? sizeVariants : undefined,
+    colorVariants: colorVariants.length ? colorVariants : [],
+    fabricVariants: modal.fabricVariants.length ? modal.fabricVariants : [],
+    woodFinishVariants: modal.woodFinishVariants.length ? modal.woodFinishVariants : [],
+    sizeVariants: sizeVariants.length ? sizeVariants : [],
     color: colorVariants[0] || modal.color || '',
     size: sizeVariants[0] || modal.size || '',
   };
